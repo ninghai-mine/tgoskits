@@ -58,14 +58,14 @@ impl Build {
     fn prepare_loongarch64(&mut self) {
         let ld_src = "src/arch/loongarch64/link.ld";
 
-        if self.uspace {
-            self.kernel_load_vaddr = 0x9000000000200000;
-        }
+        // if self.uspace {
+        self.kernel_load_vaddr = 0x9000000000200000;
+        // }
 
         let kernel_load_vaddr = self.kernel_load_vaddr as usize;
 
         let ld = include_str!("src/arch/loongarch64/link.ld")
-            .replace("${kernel_load_vaddr}", &format!("{:#x}", kernel_load_vaddr));
+            .replace("${kernel_load_vaddr}", &format!("{kernel_load_vaddr:#x}"));
 
         println!("cargo:rerun-if-changed={ld_src}");
         println!("cargo:rustc-cfg=efi");

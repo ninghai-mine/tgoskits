@@ -34,7 +34,7 @@ const R_LARCH_TLS_TPREL32: usize = 10;
 const R_LARCH_TLS_TPREL64: usize = 11;
 
 unsafe extern "C" {
-    fn _head();
+    fn _text();
     fn __rela_dyn_begin();
     fn __rela_dyn_end();
 }
@@ -64,7 +64,7 @@ struct RelaLaAbs {
 
 /// 计算加载偏移量 (实际地址 - 链接地址)
 fn get_load_offset() -> i64 {
-    sym_lma!(_head) as i64 - VMLINUX_LOAD_ADDRESS as i64
+    sym_lma!(_text) as i64 - VMLINUX_LOAD_ADDRESS as i64
 }
 
 /// 应用 .rela.dyn 重定位
@@ -86,7 +86,7 @@ pub fn apply() {
 }
 
 /// 早期重定位入口点
-pub unsafe fn rela_fix() {
+pub unsafe fn efi_relocate() {
     apply();
 
     // 刷新指令与数据缓存，确保重定位后的数据立即生效

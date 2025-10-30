@@ -3,4 +3,4 @@ pub(crate) mod entry;
 mod head;
 mod relocate;
 
-pub use relocate::rela_fix;
+pub use relocate::efi_relocate;
