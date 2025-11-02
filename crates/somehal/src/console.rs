@@ -1,4 +1,6 @@
-use core::fmt::Write;
+use core::{cell::UnsafeCell, fmt::Write};
+
+use some_serial::TSender;
 
 pub fn _print(args: core::fmt::Arguments) {
     let _ = ConFmt {}.write_fmt(args);
@@ -30,7 +32,6 @@ fn con() -> &'static dyn Con {
 
 pub(crate) trait Con: Send + Sync {
     fn write_str(&self, s: &str);
-    fn read_byte(&self) -> Option<u8>;
 }
 
 struct NoCon;
@@ -38,16 +39,12 @@ impl Con for NoCon {
     fn write_str(&self, _s: &str) {
         // Do nothing
     }
-
-    fn read_byte(&self) -> Option<u8> {
-        None
-    }
 }
 
 static mut CON: &dyn Con = &NoCon;
 
-pub(crate) unsafe fn set_printer(printer: &'static dyn Con) {
+pub(crate) unsafe fn set_out(v: &'static dyn Con) {
     unsafe {
-        CON = printer;
+        CON = v;
     }
 }

@@ -18,7 +18,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52dad5cf7342926ce1c375ec680834e56dd3cdbe8b7adf8a6f99b2854cc52c17"
 dependencies = [
  "aarch64-cpu",
- "tock-registers 0.10.0",
+ "tock-registers 0.10.1",
 ]
 
 [[package]]
@@ -148,6 +148,18 @@ dependencies = [
  "cfg-if",
  "spin 0.10.0",
  "thiserror",
+]
+
+[[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -313,6 +325,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e4bdb6b46b592948e700ea1ef24a4296491f6a0ee722b258040abd15a3714"
 
 [[package]]
+name = "once_cell"
+version = "1.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -400,8 +418,6 @@ dependencies = [
 [[package]]
 name = "rdif-base"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f8c32d8cbc18633a412130719b07d31135215d1715ac48fc3888ca835a811ba"
 dependencies = [
  "as-any",
  "async-trait",
@@ -421,13 +437,11 @@ dependencies = [
 
 [[package]]
 name = "rdif-serial"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68d515cc651b11ef2c323914f64627c5341af83049881f567f9879ec3b86b8f"
+version = "0.6.0"
 dependencies = [
  "bitflags 2.10.0",
  "futures",
- "mbarrier",
+ "heapless",
  "rdif-base",
  "spin 0.10.0",
  "thiserror",
@@ -456,20 +470,18 @@ checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
 
 [[package]]
 name = "some-serial"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f8170f8c946e784d1c5b9a4ab3282e2e2c56cfe95c9cfabe1941397ca679f13"
+version = "0.3.0"
 dependencies = [
  "bare-test-macros",
  "bitflags 2.10.0",
  "dma-api",
+ "enum_dispatch",
  "heapless",
  "log",
  "mbarrier",
- "rdif-base",
  "rdif-serial",
  "thiserror",
- "tock-registers 0.10.0",
+ "tock-registers 0.10.1",
  "x86",
 ]
 
@@ -587,9 +599,9 @@ checksum = "2b9e2fdb3a1e862c0661768b7ed25390811df1947a8acbfbefe09b47078d93c4"
 
 [[package]]
 name = "tock-registers"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0293f99756f16ff352cc78c99673766a305bdb5ed7652e78df649e9967c885a"
+checksum = "8d2d250f87fb3fb6f225c907cf54381509f47b40b74b1d1f12d2dccbc915bdfe"
 
 [[package]]
 name = "trait-ffi"

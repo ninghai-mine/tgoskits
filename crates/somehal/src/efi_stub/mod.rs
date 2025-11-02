@@ -13,7 +13,7 @@ use uefi::{
 use uefi_raw::table::system::SystemTable;
 
 use crate::{
-    acpi::{dbg2::Dbg2, set_rsdp},
+    acpi::set_rsdp,
     arch::relocate,
     efi_stub::{acpi_handle::AcpiHandle, earlycon::setup_earlycon},
     mem::{self, MB, page_size},
@@ -36,7 +36,7 @@ pub unsafe extern "C" fn efi_pe_entry(
         ::uefi::boot::set_image_handle(image_handle);
         ::uefi::table::set_system_table(system_table);
 
-        crate::console::set_printer(&UefiPrinter);
+        crate::console::set_out(&UefiPrinter);
 
         if let Err(e) = efi_main() {
             println!("EFI application error: {:?}", e);
@@ -75,6 +75,8 @@ fn efi_main() -> Result {
         println!("Failed to setup early console: {:?}", e);
     }
 
+    println!("UEFI early console initialized.");
+
     let h = boot::get_handle_for_protocol::<LoadedImage>()?;
 
     let img = boot::open_protocol_exclusive::<LoadedImage>(h)?;
@@ -103,17 +105,6 @@ fn draw_sierpinski() -> Result {
 
 struct UefiPrinter;
 impl crate::console::Con for UefiPrinter {
-    fn read_byte(&self) -> Option<u8> {
-        // system::with_stdin(|stdin| {
-        //     let mut buffer = [0u16; 1];
-        //     match stdin.read_key(&mut buffer) {
-        //         Ok(()) => Some(buffer[0] as u8),
-        //         Err(_) => None,
-        //     }
-        // })
-        None
-    }
-
     fn write_str(&self, s: &str) {
         system::with_stdout(|stdout| {
             let _ = stdout.write_str(s);
@@ -171,10 +162,6 @@ fn find_image() -> Option<()> {
             return None;
         }
     };
-
-    for dbg2 in tb.find_tables::<Dbg2>() {
-        println!("Found DBG2 table: {:#x?}", dbg2);
-    }
 
     Some(())
 }
