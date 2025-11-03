@@ -1,4 +1,4 @@
-use core::ptr::NonNull;
+use core::{ptr::NonNull, time::Duration};
 
 #[derive(Clone)]
 pub(super) struct AcpiHandle;
@@ -116,11 +116,11 @@ impl acpi::Handler for AcpiHandle {
     }
 
     fn stall(&self, microseconds: u64) {
-        ::uefi::boot::stall(microseconds as _);
+        ::uefi::boot::stall(Duration::from_micros(microseconds));
     }
 
     fn sleep(&self, milliseconds: u64) {
-        ::uefi::boot::stall((milliseconds as usize) * 1000);
+        ::uefi::boot::stall(Duration::from_millis(milliseconds));
     }
 
     fn create_mutex(&self) -> acpi::Handle {

@@ -28,7 +28,7 @@ unsafe extern "C" {
 }
 
 /// 计算加载偏移量 (实际地址 - 链接地址)
-fn get_load_offset() -> i64 {
+pub fn get_load_offset() -> i64 {
     sym_lma!(_head) as i64 - VMLINUX_LOAD_ADDRESS as i64
 }
 

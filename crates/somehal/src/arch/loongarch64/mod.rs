@@ -1,3 +1,6 @@
+#[macro_use]
+mod stackframe;
+
 mod addrspace;
 pub(crate) mod entry;
 mod head;

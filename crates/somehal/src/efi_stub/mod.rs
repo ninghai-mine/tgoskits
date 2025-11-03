@@ -1,4 +1,4 @@
-use core::{fmt::Write, hint::spin_loop, ptr::null};
+use core::{fmt::Write, hint::spin_loop, ptr::null, sync::atomic::AtomicBool};
 
 use uefi::{
     Result,
@@ -7,7 +7,7 @@ use uefi::{
     prelude::*,
     proto::loaded_image::LoadedImage,
     system::with_config_table,
-    table::cfg::{ACPI_GUID, ACPI2_GUID},
+    table::cfg::ConfigTableEntry,
 };
 use uefi_raw::table::system::SystemTable;
 
@@ -45,6 +45,7 @@ pub unsafe extern "C" fn efi_pe_entry(
 
         crate::arch::entry::efi_setup();
 
+        UEFI_SERVICE_OK.store(false, core::sync::atomic::Ordering::Relaxed);
         let mem_map = boot::exit_boot_services(None);
 
         println!("Exited boot services, owned memory map obtained.");
@@ -58,9 +59,7 @@ pub unsafe extern "C" fn efi_pe_entry(
             }
         }
 
-        loop {
-            spin_loop();
-        }
+        crate::arch::entry::kernel_entry(1, null(), system_table as *const core::ffi::c_void);
     }
 }
 
@@ -88,9 +87,15 @@ fn efi_main() -> Result {
     Ok(())
 }
 
+#[unsafe(link_section = ".data")]
+static UEFI_SERVICE_OK: AtomicBool = AtomicBool::new(true);
+
 struct UefiPrinter;
 impl crate::console::Con for UefiPrinter {
     fn write_str(&self, s: &str) {
+        if !UEFI_SERVICE_OK.load(core::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         system::with_stdout(|stdout| {
             let _ = stdout.write_str(s);
         });
@@ -103,7 +108,7 @@ fn find_acpi_rsdp() {
         let mut addr = null();
 
         for entry in config_table {
-            if entry.guid == ACPI2_GUID {
+            if entry.guid == ConfigTableEntry::ACPI2_GUID {
                 // ACPI 2.0 RSDP (推荐)
                 println!("Found ACPI 2.0 RSDP at address: {:p}", entry.address);
                 version = 2;
@@ -111,7 +116,7 @@ fn find_acpi_rsdp() {
                 break;
             }
 
-            if entry.guid == ACPI_GUID {
+            if entry.guid == ConfigTableEntry::ACPI_GUID {
                 // ACPI 1.0 RSDP (备选)
                 println!("Found ACPI 1.0 RSDP at address: {:p}", entry.address);
                 if version == 0 {
