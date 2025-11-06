@@ -90,6 +90,144 @@ impl PageTableEntry for PteImpl {
     }
 }
 
+// Flag 构造和操作方法
+impl PteImpl {
+    /// 创建带有指定flags的PTE
+    pub fn new_with_flags(
+        read: bool,
+        write: bool,
+        user_execute: bool,
+        user_access: bool,
+        privilege_execute: bool,
+        cache: u64, // 0: NonCache, 1: Normal, 2: Device
+        valid: bool,
+        is_block: bool,
+    ) -> Self {
+        let pte = PteImpl(0);
+
+        if read {
+            pte.reg().modify(PTE64::READ::SET);
+        }
+        if write {
+            pte.reg().modify(PTE64::WRITE::SET);
+        }
+        if user_execute {
+            pte.reg().modify(PTE64::USER_EXECUTE::SET);
+        }
+        if user_access {
+            pte.reg().modify(PTE64::USER_ACCESS::SET);
+        }
+        if privilege_execute {
+            pte.reg().modify(PTE64::PRIVILEGE_EXECUTE::SET);
+        }
+        pte.reg().modify(PTE64::CACHE.val(cache));
+        if valid {
+            pte.reg().modify(PTE64::VALID::SET);
+        }
+        if is_block {
+            pte.reg().modify(PTE64::BLOCK::SET);
+        }
+
+        pte
+    }
+
+    /// 用户权限模式：可读、可写、可执行、用户可访问
+    pub fn user_mode() -> Self {
+        Self::new_with_flags(
+            true,   // read
+            true,   // write
+            true,   // user_execute
+            true,   // user_access
+            false,  // privilege_execute
+            1,      // normal cache
+            true,   // valid
+            false,  // not block
+        )
+    }
+
+    /// 内核权限模式：可读、可写、特权执行
+    pub fn kernel_mode() -> Self {
+        Self::new_with_flags(
+            true,   // read
+            true,   // write
+            false,  // user_execute
+            false,  // user_access
+            true,   // privilege_execute
+            1,      // normal cache
+            true,   // valid
+            false,  // not block
+        )
+    }
+
+    /// 只读数据模式：只读、普通缓存
+    pub fn read_only() -> Self {
+        Self::new_with_flags(
+            true,   // read
+            false,  // write
+            false,  // user_execute
+            false,  // user_access
+            false,  // privilege_execute
+            1,      // normal cache
+            true,   // valid
+            false,  // not block
+        )
+    }
+
+    /// 设备寄存器模式：读写、设备缓存、大页
+    pub fn device_memory() -> Self {
+        Self::new_with_flags(
+            true,   // read
+            true,   // write
+            false,  // user_execute
+            false,  // user_access
+            false,  // privilege_execute
+            2,      // device cache
+            true,   // valid
+            true,   // block (大页)
+        )
+    }
+
+    /// 内存映射I/O模式：用户可访问、只读、设备缓存
+    pub fn mmap_io() -> Self {
+        Self::new_with_flags(
+            true,   // read
+            false,  // write
+            false,  // user_execute
+            true,   // user_access
+            false,  // privilege_execute
+            2,      // device cache
+            true,   // valid
+            false,  // not block
+        )
+    }
+
+    // Flag 查询方法
+    pub fn is_readable(&self) -> bool {
+        self.reg().is_set(PTE64::READ)
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.reg().is_set(PTE64::WRITE)
+    }
+
+    pub fn is_user_executable(&self) -> bool {
+        self.reg().is_set(PTE64::USER_EXECUTE)
+    }
+
+    pub fn is_user_accessible(&self) -> bool {
+        self.reg().is_set(PTE64::USER_ACCESS)
+    }
+
+    pub fn is_privilege_executable(&self) -> bool {
+        self.reg().is_set(PTE64::PRIVILEGE_EXECUTE)
+    }
+
+    pub fn cache_mode(&self) -> u64 {
+        self.reg().read(PTE64::CACHE)
+    }
+}
+
+
 #[derive(Debug, Clone, Copy)]
 pub struct T4kL3;
 
