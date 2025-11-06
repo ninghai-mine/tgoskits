@@ -200,6 +200,40 @@ fn test_new_l5() {
     );
 }
 
+fn test_huge<T: TableGeneric, A: FrameAllocator>(pte: T::P, alloc: A) {
+    let mut pg = PageTable::<T, A>::new(alloc).unwrap();
+
+    pg.map(&MapConfig {
+        vaddr: 0x1000_0000usize.into(),
+        paddr: 0x1000_0000usize.into(),
+        size: GB + 2 * MB + 0x1000 * 3,
+        pte,
+        allow_huge: true,
+        flush: false,
+    })
+    .unwrap();
+
+    pg.map(&MapConfig {
+        vaddr: 0usize.into(),
+        paddr: 0usize.into(),
+        size: MB + 0x1000 * 3,
+        pte,
+        allow_huge: true,
+        flush: false,
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_huge_l3() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Trace)
+        .try_init();
+
+    test_huge::<T4kL3, Fram4k>(PteImpl::user_mode(), Fram4k);
+}
+
 // ===== Flag 验证辅助函数 =====
 
 /// 验证PTE的flag属性
