@@ -90,6 +90,22 @@ impl PageTableEntry for PteImpl {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct T4kL3;
+
+impl TableGeneric for T4kL3 {
+    type P = PteImpl;
+
+    const PAGE_SIZE: usize = 0x1000;
+
+    const MAX_BLOCK_LEVEL: usize = 2;
+
+    fn flush(vaddr: Option<VirtAddr>) {
+        let _ = vaddr;
+    }
+
+    const LEVEL_BITS: &[usize] = &[9, 9, 9];
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct T4kL4;
@@ -99,13 +115,30 @@ impl TableGeneric for T4kL4 {
 
     const PAGE_SIZE: usize = 0x1000;
 
-    const LEVEL: usize = 4;
-
     const MAX_BLOCK_LEVEL: usize = 3;
 
     fn flush(vaddr: Option<VirtAddr>) {
         let _ = vaddr;
     }
+
+    const LEVEL_BITS: &[usize] = &[9, 9, 9, 9];
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct T4kL5;
+
+impl TableGeneric for T4kL5 {
+    type P = PteImpl;
+
+    const PAGE_SIZE: usize = 0x1000;
+
+    const MAX_BLOCK_LEVEL: usize = 4;
+
+    fn flush(vaddr: Option<VirtAddr>) {
+        let _ = vaddr;
+    }
+
+    const LEVEL_BITS: &[usize] = &[9, 9, 9, 9, 9];
 }
 
 #[derive(Debug, Clone, Copy, Default)]

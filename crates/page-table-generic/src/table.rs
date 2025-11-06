@@ -17,7 +17,7 @@ where
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PageTable")
             .field("root_paddr", &format_args!("{:#x}", self.root.paddr.raw()))
-            .field("table_levels", &T::LEVEL)
+            .field("table_levels", &T::LEVEL_BITS.len())
             .field("max_block_level", &T::MAX_BLOCK_LEVEL)
             .field("page_size", &format_args!("{:#x}", T::PAGE_SIZE))
             .finish()
@@ -49,7 +49,7 @@ impl<T: TableGeneric, A: FramAllocator> PageTable<T, A> {
             start_vaddr: config.vaddr,
             start_paddr: config.paddr,
             end_vaddr: config.vaddr + config.size,
-            level: T::LEVEL,
+            level: Frame::<T, A>::PT_LEVEL,
             allow_huge: config.allow_huge,
             flush: config.flush,
             pte_template: config.pte,
@@ -100,5 +100,17 @@ impl<T: TableGeneric, A: FramAllocator> PageTable<T, A> {
         }
 
         Ok(())
+    }
+
+    pub const fn page_size() -> usize {
+        T::PAGE_SIZE
+    }
+
+    pub const fn table_levels() -> usize {
+        T::LEVEL_BITS.len()
+    }
+
+    pub const fn valid_bits() -> usize {
+        Frame::<T, A>::PT_VALID_BITS
     }
 }

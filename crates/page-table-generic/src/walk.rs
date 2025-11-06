@@ -61,7 +61,7 @@ impl<'a, T: TableGeneric, A: FramAllocator> PageTableWalker<'a, T, A> {
         if !walker.config.start_vaddr.ge(&walker.config.end_vaddr) {
             let root_state = WalkState {
                 frame: Frame::from_paddr(_page_table.root.paddr, _page_table.root.allocator),
-                level: T::LEVEL,
+                level: Frame::<T, A>::PT_LEVEL,
                 index: 0,
                 base_vaddr: VirtAddr::new(0),
             };
@@ -88,7 +88,7 @@ impl<'a, T: TableGeneric, A: FramAllocator> PageTableWalker<'a, T, A> {
             let state = self.stack.last_mut().unwrap();
 
             // 检查当前级别是否还有更多条目
-            if state.index >= T::TABLE_LEN {
+            if state.index >= Frame::<T, A>::LEN {
                 self.stack.pop();
                 continue;
             }
