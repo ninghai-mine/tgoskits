@@ -1,14 +1,16 @@
+use aarch64_cpu::registers::*;
 use core::arch::naked_asm;
 
 use super::switch_to_elx;
 
 #[unsafe(naked)]
-pub unsafe extern "C" fn primary_entry(_fdt_addr: usize) -> ! {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kernel_entry(_fdt_addr: usize) -> ! {
     naked_asm!(
-        sym_addr!(x8, "{fdt}"),
+        asm_sym_addr!(x8, "{fdt}"),
         "str  x0, [x8]",
 
-        sym_addr!(x8, "__cpu0_stack_top"),
+        asm_sym_addr!(x8, "__cpu0_stack_top"),
         "mov sp, x9",
 
         "bl {switch_to_elx}",
@@ -17,9 +19,10 @@ pub unsafe extern "C" fn primary_entry(_fdt_addr: usize) -> ! {
     )
 }
 
-pub fn el_entry() -> !{
-    
+pub fn el_entry() -> ! {
+    super::relocate::apply();
+    crate::fdt::set_cmdline();
+    crate::console::setup_earlycon();
 
-
-    loop{}    
+    loop {}
 }

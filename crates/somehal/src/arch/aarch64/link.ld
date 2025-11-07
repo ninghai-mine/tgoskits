@@ -10,7 +10,7 @@ PROVIDE(PAGE_SIZE = 0x1000);
 PROVIDE(STACK_SIZE = 0x4000);
 
 OUTPUT_ARCH(aarch64)
-ENTRY(_start)
+ENTRY(_head)
 PHDRS {
 	text PT_LOAD FLAGS(7);	/* RWX */
 	note PT_NOTE FLAGS(4);	/* R__ */

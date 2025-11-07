@@ -1,6 +1,6 @@
 /// 生成 ADRP + ADD 指令组合，用于加载符号地址
 /// ADRP 计算页面基地址，ADD 加上页内偏移
-macro_rules! sym_addr {
+macro_rules! asm_sym_addr {
     ($reg:ident, $symbol:expr) => {
         concat!(
             "adrp ",
@@ -16,4 +16,20 @@ macro_rules! sym_addr {
             $symbol
         )
     };
+}
+
+macro_rules! sym_addr {
+    ($sym:expr) => {{
+        #[allow(unused_unsafe)]
+        unsafe{
+            let out: usize;
+            core::arch::asm!(
+                "adrp {r}, {s}",
+                "add  {r}, {r}, :lo12:{s}",
+                r = out(reg) out,
+                s = sym $sym,
+            );
+            out
+        }
+    }};
 }

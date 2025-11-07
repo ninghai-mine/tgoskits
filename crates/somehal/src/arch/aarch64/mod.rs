@@ -1,8 +1,6 @@
 #[macro_use]
 mod _macros;
 
-mod head;
-
 #[cfg(feature = "hv")]
 #[path = "el2/mod.rs"]
 mod elx;
@@ -11,6 +9,8 @@ mod elx;
 #[path = "el1/mod.rs"]
 mod elx;
 
-use elx::*;
-
 mod entry;
+mod head;
+mod relocate;
+
+use elx::*;

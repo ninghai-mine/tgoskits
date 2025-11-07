@@ -1,6 +1,6 @@
 use core::arch::naked_asm;
 
-use crate::arch::entry::primary_entry;
+use crate::arch::entry::kernel_entry;
 
 const FLAG_LE: usize = 0b0;
 const FLAG_PAGE_SIZE_4K: usize = 0b10;
@@ -12,7 +12,7 @@ const FLAG_ANY_MEM: usize = 0b1000;
 /// The header of the kernel.
 ///
 /// # Safety
-pub unsafe extern "C" fn _start() -> ! {
+pub unsafe extern "C" fn _head() -> ! {
     naked_asm!(
         // code0/code1
         "nop",
@@ -20,7 +20,7 @@ pub unsafe extern "C" fn _start() -> ! {
         // text_offset
         ".quad 0",
         // image_size
-        ".quad __kernel_load_end - _start",
+        ".quad __kernel_load_end - _head",
         // flags
         ".quad {flags}",
         // Reserved fields
@@ -32,6 +32,6 @@ pub unsafe extern "C" fn _start() -> ! {
         // Another reserved field at the end of the header
         ".byte 0, 0, 0, 0",
         flags = const FLAG_LE | FLAG_PAGE_SIZE_4K | FLAG_ANY_MEM,
-        entry = sym primary_entry,
+        entry = sym kernel_entry,
     )
 }

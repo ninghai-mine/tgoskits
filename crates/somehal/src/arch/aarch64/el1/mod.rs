@@ -49,4 +49,6 @@ pub fn switch_to_elx() {
         barrier::isb(barrier::SY);
         eret();
     }
+
+    el_entry();
 }

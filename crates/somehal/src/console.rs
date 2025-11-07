@@ -46,3 +46,17 @@ pub(crate) unsafe fn set_out(v: &'static dyn Con) {
         CON = v;
     }
 }
+
+pub fn setup_earlycon() {
+    let _ = earlycon_form_cmdline();
+}
+
+fn earlycon_form_cmdline() -> Option<()> {
+    let cmdline = crate::cmdline::cmdline()?;
+    let val = crate::cmdline::var("earlycon")?;
+
+    
+
+
+    None
+}

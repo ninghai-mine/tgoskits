@@ -18,8 +18,16 @@ pub mod arch;
 pub(crate) mod fdt;
 
 mod acpi;
+mod cmdline;
 #[cfg(efi)]
 mod efi_stub;
 mod elf;
-
 mod mem;
+
+trait ArchTrait {
+    fn post_allocator();
+}
+
+pub fn post_allocator() {
+    // arch::Arch::post_allocator();
+}
