@@ -3,7 +3,8 @@ use core::ptr::NonNull;
 use some_serial::*;
 
 pub fn setup_earlycon() -> Option<()> {
-    super::set_cmdline()?;
+    let _ = super::set_cmdline();
+
     if crate::console::set_earlycon_by_cmdline().is_ok() {
         return Some(());
     }
@@ -17,6 +18,7 @@ pub fn setup_earlycon() -> Option<()> {
 
 fn set_by_stdout() -> Option<()> {
     let fdt = crate::fdt::fdt_base()?;
+
     let chosen = fdt.chosen().ok()?;
     let stdout = chosen.stdout().ok()?;
     let reg = stdout.reg().ok()?.next()?;

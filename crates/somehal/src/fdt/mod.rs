@@ -5,10 +5,10 @@ mod earlycon;
 pub use earlycon::setup_earlycon;
 
 #[unsafe(link_section = ".data")]
-pub static FDT_ADDR: usize = 0;
+pub static mut FDT_ADDR: usize = 0;
 
 fn fdt_base() -> Option<base::Fdt<'static>> {
-    let fdt_addr = FDT_ADDR;
+    let fdt_addr = unsafe { FDT_ADDR };
     if fdt_addr == 0 {
         return None;
     }
