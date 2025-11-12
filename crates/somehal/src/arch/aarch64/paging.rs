@@ -115,7 +115,9 @@ pub fn enable_mmu() -> ! {
     setup_table_regs();
     set_table(tb_addr.into());
 
+    println!("Enabling MMU...");
     setup_sctlr();
+    println!("MMU enabled.");
 
     // Jump to mmu_entry using physical address
     unsafe {
