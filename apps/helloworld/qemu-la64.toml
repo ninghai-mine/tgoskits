@@ -1,5 +1,7 @@
 args = ["-nographic"]
-uefi = true
-to_bin = true
-success_regex = []
 fail_regex = []
+success_regex = [
+  "All tests passed!",
+]
+to_bin = true
+uefi = true
