@@ -1,4 +1,4 @@
-use loongArch64::register::{ecfg, eentry, tlbrentry};
+use loongArch64::register::{ecfg, eentry, estat, tlbrentry};
 
 use crate::{arch::cache::local_flush_icache_range, mem::StaticCell};
 
@@ -76,3 +76,27 @@ fn set_handler(idx: usize, handler: fn()) {
 fn handle_reserved() {}
 
 fn handle_int() {}
+
+/// 处理向量中断
+/// 等效于 C 的 do_vint()
+fn do_vint() {
+    // unsigned int estat = read_csr_estat() & CSR_ESTAT_IS;
+    let mut estat = estat::read().is();
+
+    // while ((hwirq = ffs(estat)))
+    // ffs (find first set) 返回第一个被设置的位的位置（1-based）
+    while estat != 0 {
+        // 找到第一个设置的位（从低位开始，0-based）
+        let hwirq = estat.trailing_zeros() + 1;
+
+        // estat &= ~BIT(hwirq - 1);
+        // 清除已处理的位
+        estat &= !(1 << (hwirq - 1));
+
+        handle_irq(hwirq - 1);
+    }
+}
+
+fn handle_irq(hwirq: u32) {
+    // 处理中断的具体实现
+}
