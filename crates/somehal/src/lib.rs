@@ -49,6 +49,7 @@ trait ArchTrait {
     fn _va(paddr: usize) -> *mut u8;
     fn _io(paddr: usize) -> *mut u8;
     fn ioremap(paddr: usize, size: usize) -> *mut u8;
+    fn setup_paging();
 
     fn systimer_irq() -> usize;
     fn shutdown() -> !;
@@ -73,6 +74,7 @@ trait ArchTrait {
 
 pub fn post_allocator() {
     debug!("Setup after allocator");
+    arch::Arch::setup_paging();
     arch::Arch::post_allocator();
 }
 

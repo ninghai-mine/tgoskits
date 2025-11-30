@@ -6,6 +6,7 @@ mod cache;
 mod context;
 pub(crate) mod entry;
 mod head;
+mod paging;
 mod register;
 mod relocate;
 mod trap;
@@ -147,4 +148,9 @@ impl ArchTrait for Arch {
             }
         }
     }
+    
+    fn setup_paging() {
+        paging::setup();
+    }
+
 }
