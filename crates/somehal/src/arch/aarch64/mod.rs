@@ -101,6 +101,14 @@ impl ArchTrait for Arch {
         todo!()
     }
 
+    fn kernel_page_table_paddr_asid() -> (usize, usize) {
+        todo!()
+    }
+
+    fn set_kernel_page_table_paddr_asid(paddr: usize, asid: usize) {
+        todo!()
+    }
+
     fn irq_is_enabled(crate::irq: crate::irq::SoftIrqId) -> bool {
         todo!()
     }

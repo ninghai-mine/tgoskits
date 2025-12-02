@@ -48,11 +48,12 @@ impl Memory for MemoryImpl {
     }
 
     fn kernel_page_table() -> (PhysAddr, Asid) {
-       
+        let (paddr, asid) = somehal::kernel_page_table_paddr_asid();
+        (PhysAddr::new(paddr), Asid::new(asid))
     }
 
     fn set_kernel_page_table(pt: PhysAddr, asid: Asid) {
-       
+        somehal::set_kernel_page_table_paddr_asid(pt.raw(), asid.raw());
     }
 }
 }

@@ -62,6 +62,11 @@ trait ArchTrait {
     fn set_kernel_page_table<A: FrameAllocator>(pt: PageTable<Self::PT, A>);
     fn get_kernel_page_table<A: FrameAllocator>() -> PageTable<Self::PT, A>;
 
+    /// Get the current kernel page table physical address and ASID
+    fn kernel_page_table_paddr_asid() -> (usize, usize);
+    /// Set the kernel page table physical address and ASID
+    fn set_kernel_page_table_paddr_asid(paddr: usize, asid: usize);
+
     fn systimer_irq() -> usize;
     fn shutdown() -> !;
 
@@ -86,6 +91,16 @@ trait ArchTrait {
 pub fn post_allocator() {
     debug!("Setup after allocator");
     arch::Arch::post_allocator();
+}
+
+/// Get the current kernel page table physical address and ASID
+pub fn kernel_page_table_paddr_asid() -> (usize, usize) {
+    arch::Arch::kernel_page_table_paddr_asid()
+}
+
+/// Set the kernel page table physical address and ASID
+pub fn set_kernel_page_table_paddr_asid(paddr: usize, asid: usize) {
+    arch::Arch::set_kernel_page_table_paddr_asid(paddr, asid)
 }
 
 fn prime_entry() -> ! {

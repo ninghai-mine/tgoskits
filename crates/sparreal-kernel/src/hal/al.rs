@@ -66,11 +66,11 @@ pub trait PageTable: Send + 'static {
 
 define_type! {
     /// Interrupt Request Identifier
-    IrqId(usize),
+    IrqId(usize, "{:#x}"),
     /// Physical Address
-    PhysAddr(usize),
+    PhysAddr(usize, "{:#x}"),
     /// Virtual Address
-    VirtAddr(usize),
+    VirtAddr(usize, "{:#x}"),
     ///
-    Asid(usize),
+    Asid(usize, "{:#x}"),
 }

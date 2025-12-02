@@ -235,13 +235,13 @@ pub const CSR_TLBREHI_PS: u64 = ((1 << CSR_TLBREHI_PS_WIDTH) - 1) << CSR_TLBREHI
 // 页表寄存器操作宏
 // ============================================================================
 
-/// 读取 CSR 寄存器
+/// 读取 CSR 寄存器（使用 csrrd 指令）
 macro_rules! csr_read {
     ($csr:expr) => {{
         let value: u64;
         unsafe {
             core::arch::asm!(
-                ".insn i 0b1100011, 0b000, {}, zero, {}",
+                "csrrd {}, {}",
                 out(reg) value,
                 const $csr,
                 options(nomem, nostack)
@@ -251,13 +251,13 @@ macro_rules! csr_read {
     }};
 }
 
-/// 写入 CSR 寄存器
+/// 写入 CSR 寄存器（使用 csrwr 指令）
 macro_rules! csr_write {
     ($csr:expr, $value:expr) => {{
         let val: u64 = $value;
         unsafe {
             core::arch::asm!(
-                ".insn i 0b1100011, 0b001, zero, {}, {}",
+                "csrwr {}, {}",
                 in(reg) val,
                 const $csr,
                 options(nomem, nostack)
@@ -844,11 +844,11 @@ impl PageTableEntry for Entry {
     fn set_is_huge(&mut self, b: bool) {
         self.set_huge(b);
     }
-    
+
     fn set_mem_config(&mut self, config: page_table_generic::MemConfig) {
         todo!()
     }
-    
+
     fn mem_config(&self) -> page_table_generic::MemConfig {
         todo!()
     }

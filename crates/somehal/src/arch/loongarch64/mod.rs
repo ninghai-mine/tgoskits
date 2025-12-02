@@ -6,7 +6,7 @@ mod cache;
 mod context;
 pub(crate) mod entry;
 mod head;
-mod paging;
+pub mod paging;
 mod register;
 mod relocate;
 mod trap;
@@ -193,4 +193,26 @@ impl ArchTrait for Arch {
     fn create_page_table<A: FrameAllocator>(allocator: A) -> PageTable<Self::PT, A> {
         PageTable::<Self::PT, A>::new(allocator).unwrap()
     }
+
+    fn kernel_page_table_paddr_asid() -> (usize, usize) {
+        let pt_paddr = paging::read_csr_pgdh() as usize;
+        let asid = (paging::read_csr_asid() & 0x3FF) as usize; // ASID 为低 10 位
+        (pt_paddr, asid)
+    }
+
+    fn set_kernel_page_table_paddr_asid(paddr: usize, asid: usize) {
+        // 设置 PGDH (高地址空间页表基地址，用于内核空间)
+        paging::write_csr_pgdh(paddr as u64);
+
+        // 设置 ASID
+        paging::write_csr_asid(asid as u64);
+
+        // 刷新 TLB
+        paging::local_flush_tlb_all();
+    }
 }
+
+// 导出公开的页表相关函数供外部使用
+pub use paging::{
+    local_flush_tlb_all, read_csr_asid, read_csr_pgdh, write_csr_asid, write_csr_pgdh,
+};
