@@ -47,8 +47,8 @@ impl Memory for MemoryImpl {
         Box::new( PageTableImpl( somehal::mem::new_page_table(KAlloc)))
     }
 
-    fn mmu_setup() {
-        somehal::mem::mmu_setup();
+    fn enable_paging() {
+        somehal::mem::enable_paging();
     }
 
     fn kernel_page_table() -> PhysAddr {

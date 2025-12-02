@@ -38,8 +38,8 @@ pub(crate) fn is_mmu_enabled() -> bool {
     unsafe { MMU_ENABLED }
 }
 
-pub fn mmu_setup() {
-    crate::arch::Arch::mmu_setup();
+pub fn enable_paging() {
+    crate::arch::Arch::enable_paging();
 }
 
 pub fn phys_to_virt(paddr: usize) -> *mut u8 {

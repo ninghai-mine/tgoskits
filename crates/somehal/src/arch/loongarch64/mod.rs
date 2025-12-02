@@ -174,7 +174,7 @@ impl ArchTrait for Arch {
         todo!()
     }
 
-    fn mmu_setup() {
+    fn enable_paging() {
         todo!()
     }
 }

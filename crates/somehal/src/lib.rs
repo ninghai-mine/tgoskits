@@ -58,7 +58,7 @@ trait ArchTrait {
     fn _io(paddr: usize) -> *mut u8;
     fn ioremap(paddr: usize, size: usize) -> *mut u8;
 
-    fn mmu_setup();
+    fn enable_paging();
     fn create_page_table<A: FrameAllocator>(allocator: A) -> PageTable<Self::PT, A>;
     fn kernel_page_table() -> PageTableInfo;
     fn set_kernel_page_table(val: PageTableInfo);
