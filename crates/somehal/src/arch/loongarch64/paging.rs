@@ -10,6 +10,7 @@ use core::arch::naked_asm;
 use kernutil::StaticCell;
 use num_align::NumAlign;
 use page_table_generic::{MapConfig, MemConfig, PageTableEntry, PhysAddr, TableGeneric, VirtAddr};
+use uefi::table;
 
 use crate::{
     ArchTrait,
@@ -991,12 +992,13 @@ pub fn cpu_has_ptw() -> bool {
 
 pub fn relocate_kernel_to_vm_code() -> ! {
     let mut table = page_table_generic::PageTable::<Generic, _>::new(Ram).unwrap();
+    let table_addr = table.root_paddr().raw();
     let kernel_start_phys = virt_to_phys(Arch::kernel_code().as_ptr());
     let size = Arch::kernel_code().len().align_up(page_size());
     let kernel_start_virt = super::addrspace::VM_CODE_START;
     println!(
-        "Relocating kernel from phys addr: {:#x} -> {:#x}",
-        kernel_start_phys, kernel_start_virt
+        "Relocating kernel from phys addr: {:#x} -> {:#x}, size: {:#x}, table: {:#x}",
+        kernel_start_phys, kernel_start_virt, size, table_addr
     );
     let mut pte = Entry::empty();
     pte.set_valid(true);
@@ -1013,31 +1015,28 @@ pub fn relocate_kernel_to_vm_code() -> ! {
             paddr: kernel_start_phys.into(),
             size,
             pte,
-            allow_huge: false,
+            allow_huge: true,
             flush: false,
         })
         .unwrap();
 
-    let table_addr = table.root_paddr();
     BOOT_TABLE.init(table);
     super::Arch::set_kernel_page_table(PageTableInfo {
         asid: 0,
-        addr: table_addr.raw(),
+        addr: table_addr,
     });
 
     let offset = kernel_start_virt - kernel_start_phys;
     let entry = virt_to_phys(crate::after_finally_relocate as _) + offset;
     println!(
         "Relocate kernel: table at {:#x}, offset {:#x}, entry {:#x}",
-        table_addr.raw(),
-        offset,
-        entry
+        table_addr, offset, entry
     );
-    set_table_and_relocate_kernel(table_addr.raw(), offset, entry)
+    set_table_and_relocate_kernel(offset, entry)
 }
 
 #[unsafe(naked)]
-extern "C" fn set_table_and_relocate_kernel(table: usize, offset: usize, entry: usize) -> ! {
+extern "C" fn set_table_and_relocate_kernel(offset: usize, entry: usize) -> ! {
     naked_asm!(
         "
         
