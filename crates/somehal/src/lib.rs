@@ -107,13 +107,13 @@ pub fn set_kernel_page_table_paddr(paddr: usize) {
 }
 
 fn prime_entry() -> ! {
-    arch::relocate::reset();
     fdt::setup_earlycon();
-    mem::early_init();
+    let _ = acpi::earlycon::acpi_setup_earlycon();
+    
+    mem::init_after_mmu();
 
     arch::Arch::per_cpu_trap_init(true);
 
-    let _ = acpi::earlycon::acpi_setup_earlycon();
     mem::memory_map_setup();
     mem::print_memory_map();
 

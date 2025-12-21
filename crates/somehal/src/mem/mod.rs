@@ -102,12 +102,20 @@ pub(crate) fn early_init() {
     }
 }
 
+pub(crate) fn init_after_mmu() -> Option<()> {
+    unsafe {
+        MEMORY_MAP.update(|map| map.clear());
+        super::fdt::init_memory_map();
+    }
+    Some(())
+}
+
 /// Get the physical range of the kernel image
 pub(crate) fn kimage_range() -> core::ops::Range<usize> {
     let kernel = crate::arch::Arch::kernel_code().as_ptr_range();
     let start = virt_to_phys(kernel.start);
-    let end = ram::current() as _;
-    start..end
+    let end = ram::current() as usize;
+    start..end.align_up(2 * MB)
 }
 
 pub fn page_size() -> usize {

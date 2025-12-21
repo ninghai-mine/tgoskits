@@ -1,7 +1,5 @@
 use crate::arch::head::_head;
-use crate::arch::paging::_pa;
 use crate::consts::VM_LOAD_ADDRESS;
-use crate::mem::phys_to_virt;
 
 // AArch64 重定位类型常量
 const R_AARCH64_RELATIVE: u32 = 1027;
@@ -32,28 +30,28 @@ pub fn reset() {
     }
 }
 
-pub(crate) fn print_reloc_info() {
-    unsafe {
-        let rela_start = ext_sym_addr!(__rela_dyn_begin);
-        let rela_end = ext_sym_addr!(__rela_dyn_end);
-        let rela_size = rela_end - rela_start;
-        let rela_count = rela_size / core::mem::size_of::<crate::elf::Rela>();
-        println!(
-            "Relocation entries from {:#x} to {:#x}, count: {}",
-            rela_start, rela_end, rela_count
-        );
+// pub(crate) fn print_reloc_info() {
+//     unsafe {
+//         let rela_start = ext_sym_addr!(__rela_dyn_begin);
+//         let rela_end = ext_sym_addr!(__rela_dyn_end);
+//         let rela_size = rela_end - rela_start;
+//         let rela_count = rela_size / core::mem::size_of::<crate::elf::Rela>();
+//         println!(
+//             "Relocation entries from {:#x} to {:#x}, count: {}",
+//             rela_start, rela_end, rela_count
+//         );
 
-        let rela_slice =
-            core::slice::from_raw_parts(rela_start as *const crate::elf::Rela, rela_count);
+//         let rela_slice =
+//             core::slice::from_raw_parts(rela_start as *const crate::elf::Rela, rela_count);
 
-        for (i, rela) in rela_slice.iter().enumerate() {
-            println!(
-                "Reloc[{}]: offset={:#x}, val={:#x}, addend={:#x}",
-                i,
-                rela.r_offset,
-                (rela.r_offset as usize as *const u64).read(),
-                rela.r_addend
-            );
-        }
-    }
-}
+//         for (i, rela) in rela_slice.iter().enumerate() {
+//             println!(
+//                 "Reloc[{}]: offset={:#x}, val={:#x}, addend={:#x}",
+//                 i,
+//                 rela.r_offset,
+//                 (rela.r_offset as usize as *const u64).read(),
+//                 rela.r_addend
+//             );
+//         }
+//     }
+// }
