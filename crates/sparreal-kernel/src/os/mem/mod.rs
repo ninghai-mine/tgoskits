@@ -18,6 +18,11 @@ pub(crate) fn __va(addr: PhysAddr) -> VirtAddr {
     VirtAddr::new(addr.raw() + offset)
 }
 
+pub(crate) fn __kimage_va(addr: PhysAddr) -> VirtAddr {
+    let offset = crate::hal::al::memory::kimage_offset();
+    VirtAddr::new((addr.raw() as isize - offset) as usize)
+}
+
 pub(crate) fn init_heap(regions: &[MemoryDescriptor]) {
     for region in regions {
         if region.memory_type == kernutil::memory::MemoryType::Free {

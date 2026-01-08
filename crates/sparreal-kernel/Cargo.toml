@@ -21,6 +21,7 @@ thiserror.workspace = true
 trait-ffi = "0.2"
 bitflags = "2"
 page-table-generic = {workspace = true}
+num-align = "0.1"
 
 dma-api = {workspace = true, features = ["alloc"]}
 kernutil = {workspace = true}

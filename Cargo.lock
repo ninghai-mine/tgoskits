@@ -1012,6 +1012,7 @@ dependencies = [
  "heapless",
  "kernutil",
  "log",
+ "num-align",
  "page-table-generic",
  "rgb",
  "sparreal-macros",

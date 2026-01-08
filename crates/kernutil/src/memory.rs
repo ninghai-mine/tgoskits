@@ -60,6 +60,7 @@ impl MemoryDescriptor {
 pub enum MemoryType {
     #[default]
     Free,
+    KImage,
     Reserved,
     Mmio,
 }

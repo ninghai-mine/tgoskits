@@ -8,10 +8,7 @@ pub mod mmu;
 pub(crate) mod ram;
 pub(crate) mod region;
 
-use crate::{
-    ArchTrait,
-    mem::{mmu::ArchPageTable, ram::Ram},
-};
+use crate::{ArchTrait, mem::ram::Ram};
 
 pub use page_table_generic::*;
 
@@ -19,14 +16,13 @@ pub const KB: usize = 1024;
 pub const MB: usize = 1024 * KB;
 pub const GB: usize = 1024 * MB;
 
-/// Offset between virtual address and physical address of the loaded kernel image
 static mut VM_LOAD_OFFSET: isize = 0;
 static MEMORY_MAP: StaticCell<MemoryMap> = StaticCell::new(MemoryMap::new());
 
 // pub type PageTable<A> = crate::arch::PT<A>;
 pub type MemoryMap = heapless::Vec<MemoryDescriptor, 128>;
 
-/// Set the offset between virtual address and physical address of the loaded kernel image
+/// 运行地址 - 链接地址
 pub(crate) fn set_vm_load_offset(offset: isize) {
     unsafe {
         VM_LOAD_OFFSET = offset;
@@ -119,8 +115,10 @@ pub(crate) fn init_after_mmu() -> Option<()> {
 pub(crate) fn kimage_range() -> core::ops::Range<usize> {
     let kernel = crate::arch::Arch::kernel_code().as_ptr_range();
     let start = virt_to_phys(kernel.start);
-    let end = ram::current() as usize;
-    start..end.align_up(2 * MB)
+    let end = virt_to_phys(kernel.end);
+    // let end = ram::current() as usize;
+    // start..end.align_up(2 * MB)
+    start..end.align_up(page_size())
 }
 
 pub fn page_size() -> usize {
@@ -130,15 +128,21 @@ pub fn page_size() -> usize {
     core::ptr::addr_of!(PAGE_SIZE) as usize
 }
 
-pub fn new_page_table<A: FrameAllocator>(allocator: A) -> Result<ArchPageTable<A>, PagingError> {
-    // crate::arch::Arch::create_page_table(allocator)
-    crate::mem::mmu::new_page_table(allocator)
+fn ram_used_range() -> core::ops::Range<usize> {
+    let kernel = crate::arch::Arch::kernel_code().as_ptr_range();
+    let start = virt_to_phys(kernel.end);
+    let end = ram::current() as usize;
+    start..end.align_up(page_size())
 }
 
 pub(crate) fn memory_map_setup() {
     let kernel_range = kimage_range();
-    let desc = MemoryDescriptor::new_with_range("Kernel", kernel_range, MemoryType::Reserved);
+    let desc = MemoryDescriptor::new_with_range("Kernel", kernel_range, MemoryType::KImage);
 
+    add_memory_descriptor(desc).unwrap();
+
+    let ram_range = ram_used_range();
+    let desc = MemoryDescriptor::new_with_range("Some Rsv", ram_range, MemoryType::Reserved);
     add_memory_descriptor(desc).unwrap();
 
     if let Some(desc) = crate::console::debug_to_memory_desc() {

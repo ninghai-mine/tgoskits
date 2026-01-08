@@ -52,7 +52,7 @@ impl Memory for MemoryImpl {
     }
 
     fn page_table_new() -> Result< Box<dyn PageTable>, PagingError> {
-        Ok(Box::new( PageTableImpl( somehal::mem::new_page_table(KernelAllocator)?)))
+        Ok(Box::new( PageTableImpl( somehal::mem::mmu::new_page_table(KernelAllocator)?)))
     }
 
     fn enable_paging() {
