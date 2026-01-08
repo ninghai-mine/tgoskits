@@ -49,14 +49,6 @@ impl ArchTrait for Arch {
         elx::is_mmu_enabled()
     }
 
-    fn ioremap(paddr: usize, _size: usize) -> *mut u8 {
-        if is_mmu_enabled() {
-            todo!()
-        } else {
-            paddr as *mut u8
-        }
-    }
-
     fn per_cpu_trap_init(_is_primary: bool) {
         trap::setup();
         println!("Disable user page table");

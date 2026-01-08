@@ -86,13 +86,6 @@ pub fn virt_to_phys(vaddr: *const u8) -> usize {
     crate::arch::Arch::virt_to_phys(vaddr)
 }
 
-pub fn ioremap(paddr: usize, size: usize) -> *mut u8 {
-    let end = paddr + size;
-    let paddr = paddr.align_down(page_size());
-    let size = end.align_up(page_size()) - paddr;
-    crate::arch::Arch::ioremap(paddr, size)
-}
-
 pub(crate) fn _fixmap_io(paddr: usize) -> *mut u8 {
     if is_mmu_enabled() {
         __va(paddr)

@@ -11,6 +11,7 @@ pub(crate) use handle::AcpiHandle;
 static mut RSDP: usize = 0;
 
 /// 设置RSDP地址
+#[allow(unused)]
 pub(crate) fn set_rsdp(addr: *const c_void) {
     unsafe {
         RSDP = addr as usize;
