@@ -621,6 +621,7 @@ pub fn setup() {
     tlbidx::set_ps(PS);
     stlbps::set_ps(PS);
     tlbrehi::set_ps(PS);
+
     /// PWCL(Page Walk Controller for Lower Half Address Space) CSR flags
     ///
     /// <https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html#page-walk-controller-for-lower-half-address-space>
@@ -658,16 +659,7 @@ pub fn setup() {
     // Enable mapped address translation mode
     crmd::set_pg(true);
     crmd::set_da(false);
-
-    // crmd::set_pg(true);
-    // crmd::set_da(false);
-    // // 设置页大小
-    // write_csr_pagesize(PS_DEFAULT_SIZE);
-    // write_csr_stlbpgsize(PS_DEFAULT_SIZE);
-    // write_csr_tlbrefill_pagesize(PS_DEFAULT_SIZE);
-
-    // // 设置页表遍历器
-    // setup_ptwalker();
+    local_flush_tlb_all();
 }
 
 // ============================================================================
@@ -735,12 +727,19 @@ pub fn relocate_kernel_to_vm_code() -> ! {
     pte.set_writable(true);
     pte.set_executable(true);
     pte.set_mem_attr(MemAttributes::Normal);
+    pte.set_global(true); // 设置全局位，确保在大页映射时正确设置 GH 位
+
+    println!("Page table entry flags: {:?}", pte);
 
     let v_start = __kimage_va(k_start);
     let v_end = v_start as usize + crate::mem::kimage_range().len();
     let size = v_end.align_up(2 * MB) - v_start as usize;
 
     print_mapping("KImage", v_start as _, k_start, size);
+    println!(
+        "Mapping: vaddr={:#x}, paddr={:#x}, size={:#x}",
+        v_start as usize, k_start, size
+    );
 
     table
         .map(&MapConfig {
@@ -753,14 +752,103 @@ pub fn relocate_kernel_to_vm_code() -> ! {
         })
         .unwrap();
 
+    println!("Mapping completed successfully");
     let tb_addr = table.root_paddr();
     crate::mem::mmu::set_boot_table(table);
 
-    println!("Boot page table at physical address: {:#x}", tb_addr);
+    println!("Boot page table at physical address: {:#x}", tb_addr.raw());
+
+    // 验证页表内容 - 读取 PGD 索引 511
+    let pgd_vaddr = tb_addr.raw() as usize + crate::arch::addrspace::PAGE_OFFSET;
+    println!("PGD virtual address: {:#x}", pgd_vaddr);
+
+    // 读取 PGD[511] (错误地址对应的 PGD 索引)
+    let pgd_entry_addr = pgd_vaddr + 511 * 8;
+    let pgd_entry: u64 = unsafe { core::ptr::read_volatile(pgd_entry_addr as *const u64) };
+    println!("PGD[511] = {:#x}", pgd_entry);
+
+    if pgd_entry == 0 {
+        println!("ERROR: PGD[511] is zero! Page table mapping failed!");
+    } else {
+        println!(
+            "PGD[511] is valid, next level table at: {:#x}",
+            pgd_entry & 0x0000fffffffff000
+        );
+
+        // 验证 PUD 级别 - 索引 510
+        let pud_table_addr =
+            (pgd_entry & 0x0000fffffffff000) as usize + crate::arch::addrspace::PAGE_OFFSET;
+        let pud_entry_addr = pud_table_addr + 510 * 8;
+        let pud_entry: u64 = unsafe { core::ptr::read_volatile(pud_entry_addr as *const u64) };
+        println!("PUD[510] = {:#x}", pud_entry);
+
+        if pud_entry == 0 {
+            println!("ERROR: PUD[510] is zero!");
+        } else {
+            // 检查是否是大页映射 (GH 位 = bit 6)
+            let is_huge = (pud_entry & (1 << 6)) != 0;
+            println!("PUD[510] is huge page: {}", is_huge);
+
+            if is_huge {
+                // 这是一个大页映射，直接检查物理地址
+                let paddr = pud_entry & 0x0000fffffffff000;
+                println!("Huge page mapping: paddr={:#x}", paddr);
+            } else {
+                let pmd_table_addr =
+                    (pud_entry & 0x0000fffffffff000) as usize + crate::arch::addrspace::PAGE_OFFSET;
+                println!("PUD[510] points to PMD table at: {:#x}", pmd_table_addr);
+
+                // 验证 PMD 级别 - 索引 0
+                let pmd_entry_addr = pmd_table_addr + 0 * 8;
+                let pmd_entry: u64 =
+                    unsafe { core::ptr::read_volatile(pmd_entry_addr as *const u64) };
+                println!("PMD[0] = {:#x}", pmd_entry);
+
+                if pmd_entry == 0 {
+                    println!("ERROR: PMD[0] is zero!");
+                } else {
+                    let is_huge_pmd = (pmd_entry & (1 << 6)) != 0;
+                    println!("PMD[0] is huge page: {}", is_huge_pmd);
+
+                    if is_huge_pmd {
+                        // PMD 级别的大页映射 (2MB)
+                        let paddr = pmd_entry & 0x0000fffffffff000;
+                        println!("PMD huge page mapping: paddr={:#x}", paddr);
+                    } else {
+                        let pte_table_addr = (pmd_entry & 0x0000fffffffff000) as usize
+                            + crate::arch::addrspace::PAGE_OFFSET;
+                        println!("PMD[0] points to PTE table at: {:#x}", pte_table_addr);
+
+                        // 验证 PTE 级别 - 索引 21
+                        let pte_entry_addr = pte_table_addr + 21 * 8;
+                        let pte_entry: u64 =
+                            unsafe { core::ptr::read_volatile(pte_entry_addr as *const u64) };
+                        println!("PTE[21] = {:#x}", pte_entry);
+
+                        if pte_entry == 0 {
+                            println!("ERROR: PTE[21] is zero!");
+                        } else {
+                            let paddr = pte_entry & 0x0000fffffffff000;
+                            let valid = (pte_entry & 0x1) != 0;
+                            println!("PTE[21]: paddr={:#x}, valid={}", paddr, valid);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Use physical address to avoid virtual address mapping issues
     let mmu_entry_phys = to_phys(super::entry::mmu_entry as *const () as usize);
     println!("MMU Entry point at physical address: {:#x}", mmu_entry_phys);
+
+    let v_entry = __kimage_va(mmu_entry_phys) as usize;
+    println!("MMU Entry virtual address: {:#x}", v_entry);
+
+    // 验证地址转换
+    let expected_vaddr = 0xffffffff80000000 + (mmu_entry_phys - crate::mem::kimage_range().start);
+    println!("Expected virtual address: {:#x}", expected_vaddr);
+    println!("Address conversion correct: {}", v_entry == expected_vaddr);
 
     let tb = PageTableInfo {
         asid: 0,
@@ -770,13 +858,24 @@ pub fn relocate_kernel_to_vm_code() -> ! {
     let v_sp = __va(to_phys(ext_sym_addr!(__cpu0_stack_top))) as usize;
     let v_entry = __kimage_va(mmu_entry_phys) as usize;
 
-    println!("Enabling MMU...");
-    setup();
+    println!("Setting up page table...");
+    // 先设置页表基地址，但还没有启用 MMU
     super::Arch::set_kernel_page_table(tb);
+
+    // 添加数据同步屏障，确保页表写入完成
+    unsafe {
+        core::arch::asm!("dbar 0", options(nomem, nostack));
+    }
+
+    println!("Enabling MMU...");
+    // 配置页大小并启用 MMU
+    setup();
+
+    // 打印寄存器状态
+    print_registers();
 
     println!("MMU enabled, jumping to {v_entry:#x}, sp={v_sp:#x}");
     crate::mem::mmu::set_mmu_enabled();
-
     relocate_kernel(v_entry, v_sp);
     unreachable!()
 }
@@ -789,4 +888,194 @@ extern "C" fn relocate_kernel(entry: usize, sp: usize) {
         jr $a0
         ",
     )
+}
+
+fn print_registers() {
+    use loongArch64::register::{crmd, stlbps, tlbidx, tlbrehi};
+
+    println!("\n=== LoongArch64 页表寄存器状态 ===\n");
+
+    // 1. CRMD 寄存器 (0x0)
+    let crmd_val = crmd::read();
+    let crmd_raw = csr_read!(0x0u32);
+    println!("CRMD (0x0) 控制模式寄存器:");
+    println!("  原始值: {:#018x}", crmd_raw);
+    println!(
+        "  PG (页面使能): {}",
+        if crmd_val.pg() {
+            "✓ 启用"
+        } else {
+            "✗ 禁用"
+        }
+    );
+    println!("  DA (直接): {}", crmd_val.da());
+    println!(
+        "  IE (中断使能): {}",
+        if crmd_val.ie() {
+            "✓ 启用"
+        } else {
+            "✗ 禁用"
+        }
+    );
+    println!("  PLV (特权级): {}", crmd_val.plv() as u8);
+
+    // 2. 页表基地址寄存器
+    println!("\n页表基地址寄存器:");
+    println!("  ASID (0x18) 地址空间标识符: {:#06x}", read_csr_asid());
+    println!(
+        "  PGDL (0x19) 低地址空间页表基址: {:#018x}",
+        read_csr_pgdl()
+    );
+    println!(
+        "  PGDH (0x1a) 高地址空间页表基址: {:#018x}",
+        read_csr_pgdh()
+    );
+    println!("  PGD (0x1b) 当前页表基址: {:#018x}", read_csr_pgd());
+
+    // 3. PWCTL0 寄存器
+    let pwctl0 = read_csr_pwctl0();
+    println!("\nPWCTL0 (0x1c) 页表遍历控制寄存器0:");
+    println!("  原始值: {:#018x}", pwctl0);
+    let pt_base = pwctl0 & 0x1f;
+    let pt_width = (pwctl0 >> 5) & 0x1f;
+    let dir0_base = (pwctl0 >> 10) & 0x1f;
+    let dir0_width = (pwctl0 >> 15) & 0x1f;
+    let dir1_base = (pwctl0 >> 20) & 0x1f;
+    let dir1_width = (pwctl0 >> 25) & 0x1f;
+    let ptew = (pwctl0 >> 30) & 0x3;
+    println!("  PTBase (页表基址): {} (期望: 12)", pt_base);
+    println!("  PTWidth (页表宽度): {} (期望: 9)", pt_width);
+    println!("  Dir0Base (目录0基址/PMD): {} (期望: 21)", dir0_base);
+    println!("  Dir0Width (目录0宽度): {} (期望: 9)", dir0_width);
+    println!("  Dir1Base (目录1基址/PUD): {} (期望: 30)", dir1_base);
+    println!("  Dir1Width (目录1宽度): {} (期望: 9)", dir1_width);
+    println!("  PTEW (页表项宽度): {} (期望: 0=8字节)", ptew);
+
+    // 4. PWCTL1 寄存器
+    let pwctl1 = read_csr_pwctl1();
+    println!("\nPWCTL1 (0x1d) 页表遍历控制寄存器1:");
+    println!("  原始值: {:#018x}", pwctl1);
+    let dir2_base = pwctl1 & 0x3f;
+    let dir2_width = (pwctl1 >> 6) & 0x3f;
+    let dir3_base = (pwctl1 >> 12) & 0x3f;
+    let dir3_width = (pwctl1 >> 18) & 0x3f;
+    let ptw_enable = (pwctl1 >> 24) & 0x1;
+    println!("  Dir2Base (目录2基址/PGD): {} (期望: 39)", dir2_base);
+    println!("  Dir2Width (目录2宽度): {} (期望: 9)", dir2_width);
+    println!("  Dir3Base (目录3基址): {} (期望: 0)", dir3_base);
+    println!("  Dir3Width (目录3宽度): {} (期望: 0)", dir3_width);
+    println!(
+        "  PTW (硬件页表遍历): {}",
+        if ptw_enable != 0 { "启用" } else { "禁用" }
+    );
+
+    // 5. 页大小寄存器
+    println!("\n页大小寄存器:");
+    let tlbidx_val = tlbidx::read();
+    let ps_tlbidx = tlbidx_val.ps() as usize;
+    println!(
+        "  TLBIDX.PS (0x10) TLB页大小: {:#04x} (期望: {:#04x}=4KB)",
+        ps_tlbidx, PS_4K
+    );
+    let stlbps_val = stlbps::read();
+    let ps_stlb = stlbps_val.ps() as usize;
+    println!(
+        "  STLBPS.PS (0x1e) STLB页大小: {:#04x} (期望: {:#04x}=4KB)",
+        ps_stlb, PS_4K
+    );
+    let tlbrehi_val = tlbrehi::read();
+    let ps_tlbrefill = tlbrehi_val.ps() as usize;
+    println!(
+        "  TLBREHI.PS (0x8e) TLB Refill页大小: {:#04x} (期望: {:#04x}=4KB)",
+        ps_tlbrefill, PS_4K
+    );
+    let stlbpgsize = read_csr_stlbpgsize();
+    println!("  STLBPGSIZE (0x1e) 原始值: {:#018x}", stlbpgsize);
+
+    // 6. 配置验证
+    println!("\n=== 配置验证 ===");
+
+    // 验证页大小
+    let page_size_valid = ps_tlbidx == PS_4K && ps_stlb == PS_4K && ps_tlbrefill == PS_4K;
+    if page_size_valid {
+        println!("✓ 页大小配置正确: 4KB (PS={:#04x})", PS_4K);
+    } else {
+        println!("✗ 页大小配置不正确!");
+        println!(
+            "  TLBIDX.PS = {:#04x}, STLBPS.PS = {:#04x}, TLBREHI.PS = {:#04x}",
+            ps_tlbidx, ps_stlb, ps_tlbrefill
+        );
+    }
+
+    // 验证4级页表配置
+    let four_level_valid = pt_base == 12
+        && pt_width == 9
+        && dir0_base == 21
+        && dir0_width == 9
+        && dir1_base == 30
+        && dir1_width == 9
+        && dir2_base == 39
+        && dir2_width == 9;
+
+    if four_level_valid {
+        println!("✓ 4级页表配置正确:");
+        println!("  PTE:  bits[12..21]  (9 bits, 512 entries)");
+        println!("  PMD:  bits[21..30]  (9 bits, 512 entries)");
+        println!("  PUD:  bits[30..39]  (9 bits, 512 entries)");
+        println!("  PGD:  bits[39..48]  (9 bits, 512 entries)");
+    } else {
+        println!("✗ 4级页表配置不正确!");
+        println!(
+            "  PTBase={}, PTWidth={}, Dir0Base={}, Dir0Width={}",
+            pt_base, pt_width, dir0_base, dir0_width
+        );
+        println!(
+            "  Dir1Base={}, Dir1Width={}, Dir2Base={}, Dir2Width={}",
+            dir1_base, dir1_width, dir2_base, dir2_width
+        );
+    }
+
+    // 验证单页表项（8字节）
+    let pte_width_valid = ptew == 0;
+    if pte_width_valid {
+        println!("✓ 页表项宽度正确: 8字节 (PTEW=0)");
+    } else {
+        println!("✗ 页表项宽度不正确: PTEW={} (期望: 0)", ptew);
+    }
+
+    // 验证 CRMD.PG
+    let pg_enabled = crmd_val.pg();
+    if pg_enabled {
+        println!("✓ 页表转换已启用 (CRMD.PG=1)");
+    } else {
+        println!("✗ 页表转换未启用 (CRMD.PG=0)");
+    }
+
+    // 总体验证
+    let all_valid = page_size_valid && four_level_valid && pte_width_valid && pg_enabled;
+    println!(
+        "\n总体验证结果: {}",
+        if all_valid {
+            "✓ 通过"
+        } else {
+            "✗ 失败"
+        }
+    );
+
+    // ========== 页表遍历测试 ==========
+    println!("\n========== 页表遍历测试 ==========\n");
+
+    // 测试固定映射地址
+    let test_vaddr = 0xFFFFFFFF800153A0usize;
+    println!("测试虚拟地址: {:#018x}", test_vaddr);
+
+    // 执行页表遍历 - 实际调用函数进行分析
+    println!("开始页表遍历（带详细调试输出）...\n");
+
+    // 添加超时保护的简单实现：使用循环计数器
+    // 如果在某个步骤停留太久，可以通过串口输出看到当前位置
+    let _result = super::pte::find_stlb(test_vaddr);
+
+    println!("\n✓ 页表遍历完成");
+    println!("====================================\n");
 }
