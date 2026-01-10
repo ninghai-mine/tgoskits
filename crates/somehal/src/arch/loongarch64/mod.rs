@@ -15,7 +15,6 @@ use loongArch64::{
     register::{crmd, tcfg, ticlr},
     time::{Time, get_timer_freq},
 };
-use page_table_generic::{FrameAllocator, MapConfig, PageTable};
 pub use paging::Entry as Pte;
 pub use relocate::relocate;
 pub use relocate::relocate_kernel_to_vm_code;

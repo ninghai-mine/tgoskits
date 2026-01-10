@@ -1037,29 +1037,6 @@ pub fn relocate_kernel_to_vm_code() -> ! {
         })
         .unwrap();
 
-    let debug_base = unsafe { crate::console::DEBUG_BASE };
-    if debug_base != 0 {
-        let start = debug_base.align_down(page_size());
-        let size = page_size();
-        let mut pte = Entry::new_valid();
-        pte.set_writable(true);
-        pte.set_executable(false);
-        pte.set_mem_attr(MemAttributes::Device);
-
-        print_mapping("Debug serial", __va(start) as _, start, size);
-
-        table
-            .map(&MapConfig {
-                vaddr: start.into(),
-                paddr: start.into(),
-                size,
-                pte,
-                allow_huge: true,
-                flush: false,
-            })
-            .unwrap();
-    }
-
     let tb_addr = table.root_paddr();
     crate::mem::mmu::set_boot_table(table);
 
@@ -1074,7 +1051,7 @@ pub fn relocate_kernel_to_vm_code() -> ! {
         addr: tb_addr.into(),
     };
 
-    let v_sp = __kimage_va(to_phys(ext_sym_addr!(__cpu0_stack_top))) as usize;
+    let v_sp = __va(to_phys(ext_sym_addr!(__cpu0_stack_top))) as usize;
     let v_entry = __kimage_va(mmu_entry_phys) as usize;
 
     println!("Enabling MMU...");
