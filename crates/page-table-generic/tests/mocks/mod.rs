@@ -58,8 +58,22 @@ impl Debug for PteImpl {
 }
 
 impl PageTableEntry for PteImpl {
+    fn new_valid() -> Self {
+        let mut pte = Self(0);
+        pte.set_valid(true);
+        pte
+    }
+
     fn valid(&self) -> bool {
         self.reg().is_set(PTE64::VALID)
+    }
+
+    fn set_valid(&mut self, valid: bool) {
+        self.reg().modify(if valid {
+            PTE64::VALID::SET
+        } else {
+            PTE64::VALID::CLEAR
+        });
     }
 
     fn paddr(&self) -> PhysAddr {
@@ -69,14 +83,6 @@ impl PageTableEntry for PteImpl {
     fn set_paddr(&mut self, paddr: PhysAddr) {
         let paddr = paddr.raw() >> 12;
         self.reg().modify(PTE64::PA.val(paddr as _));
-    }
-
-    fn set_valid(&mut self, valid: bool) {
-        self.reg().modify(if valid {
-            PTE64::VALID::SET
-        } else {
-            PTE64::VALID::CLEAR
-        });
     }
 
     fn is_huge(&self) -> bool {
@@ -91,59 +97,85 @@ impl PageTableEntry for PteImpl {
         });
     }
 
-    fn set_mem_config(&mut self, config: MemConfig) {
-        // 设置访问权限
-        self.reg().modify(
-            PTE64::READ.val(if config.access.contains(AccessFlags::READ) {
-                1
-            } else {
-                0
-            }) + PTE64::WRITE.val(if config.access.contains(AccessFlags::WRITE) {
-                1
-            } else {
-                0
-            }) + PTE64::USER_EXECUTE.val(if config.access.contains(AccessFlags::EXECUTE) {
-                1
-            } else {
-                0
-            }) + PTE64::USER_ACCESS.val(if config.access.contains(AccessFlags::LOWER) {
-                1
-            } else {
-                0
-            }),
-        );
-
-        // 设置缓存属性
-        let cache_val = match config.attrs {
-            MemAttributes::Normal => 1,
-            MemAttributes::Device => 2,
-            MemAttributes::Uncached => 0,
-        };
-        self.reg().modify(PTE64::CACHE.val(cache_val));
+    fn is_writable(&self) -> bool {
+        self.reg().is_set(PTE64::WRITE)
     }
 
-    fn mem_config(&self) -> MemConfig {
-        let mut access = AccessFlags::empty();
-        if self.reg().is_set(PTE64::READ) {
-            access |= AccessFlags::READ;
-        }
-        if self.reg().is_set(PTE64::WRITE) {
-            access |= AccessFlags::WRITE;
-        }
-        if self.reg().is_set(PTE64::USER_EXECUTE) {
-            access |= AccessFlags::EXECUTE;
-        }
-        if self.reg().is_set(PTE64::USER_ACCESS) {
-            access |= AccessFlags::LOWER;
-        }
+    fn set_writable(&mut self, writable: bool) {
+        self.reg().modify(if writable {
+            PTE64::WRITE::SET
+        } else {
+            PTE64::WRITE::CLEAR
+        });
+    }
 
-        let attrs = match self.reg().read(PTE64::CACHE) {
+    fn is_executable(&self) -> bool {
+        self.reg().is_set(PTE64::USER_EXECUTE) || self.reg().is_set(PTE64::PRIVILEGE_EXECUTE)
+    }
+
+    fn set_executable(&mut self, executable: bool) {
+        if executable {
+            self.reg().modify(PTE64::PRIVILEGE_EXECUTE::SET);
+        } else {
+            self.reg().modify(PTE64::PRIVILEGE_EXECUTE::CLEAR);
+        }
+    }
+
+    fn is_lower_access(&self) -> bool {
+        self.reg().is_set(PTE64::USER_ACCESS)
+    }
+
+    fn set_lower_access(&mut self, lower: bool) {
+        self.reg().modify(if lower {
+            PTE64::USER_ACCESS::SET
+        } else {
+            PTE64::USER_ACCESS::CLEAR
+        });
+    }
+
+    fn is_global(&self) -> bool {
+        // 对于这个 mock 实现，我们假设不支持全局页
+        false
+    }
+
+    fn set_global(&mut self, _global: bool) {
+        // 对于这个 mock 实现，忽略全局标志设置
+    }
+
+    fn is_accessed(&self) -> bool {
+        // 这个 mock 实现不支持访问位
+        false
+    }
+
+    fn set_accessed(&mut self, _accessed: bool) {
+        // 这个 mock 实现不支持访问位设置
+    }
+
+    fn is_dirty(&self) -> bool {
+        // 这个 mock 实现不支持脏位
+        false
+    }
+
+    fn set_dirty(&mut self, _dirty: bool) {
+        // 这个 mock 实现不支持脏位设置
+    }
+
+    fn mem_attr(&self) -> MemAttributes {
+        match self.reg().read(PTE64::CACHE) {
             1 => MemAttributes::Normal,
             2 => MemAttributes::Device,
             _ => MemAttributes::Uncached,
-        };
+        }
+    }
 
-        MemConfig { access, attrs }
+    fn set_mem_attr(&mut self, attr: MemAttributes) {
+        let cache_val = match attr {
+            MemAttributes::Normal => 1,
+            MemAttributes::Device => 2,
+            MemAttributes::Uncached => 0,
+            MemAttributes::PerCpu => 1, // PerCpu 使用 Normal 缓存
+        };
+        self.reg().modify(PTE64::CACHE.val(cache_val));
     }
 }
 
@@ -426,6 +458,50 @@ impl PteImpl {
             true,  // valid
             false, // not block
         )
+    }
+
+    /// 获取页表项的内存配置
+    ///
+    /// 这是一个便捷方法，将细粒度的 PageTableEntry trait 方法
+    /// 组合成高级别的 MemConfig 结构。
+    pub fn mem_config(&self) -> MemConfig {
+        let mut access = AccessFlags::empty();
+
+        // 根据页表项状态设置访问权限
+        if self.is_writable() {
+            access |= AccessFlags::WRITE;
+        }
+        if self.is_executable() {
+            access |= AccessFlags::EXECUTE;
+        }
+        if self.is_lower_access() {
+            access |= AccessFlags::LOWER;
+        }
+
+        // 假设所有有效的页表项都是可读的
+        // （如果架构不支持不可读的页，则总是设置此位）
+        if self.valid() {
+            access |= AccessFlags::READ;
+        }
+
+        MemConfig {
+            access,
+            attrs: self.mem_attr(),
+        }
+    }
+
+    /// 设置页表项的内存配置
+    ///
+    /// 这是一个便捷方法，从高级别的 MemConfig 结构中提取配置
+    /// 并调用相应的 PageTableEntry trait 方法。
+    pub fn set_mem_config(&mut self, config: MemConfig) {
+        // 设置访问权限
+        self.set_writable(config.access.contains(AccessFlags::WRITE));
+        self.set_executable(config.access.contains(AccessFlags::EXECUTE));
+        self.set_lower_access(config.access.contains(AccessFlags::LOWER));
+
+        // 设置内存属性
+        self.set_mem_attr(config.attrs);
     }
 }
 
