@@ -58,11 +58,15 @@ impl PageTableEntry for Entry {
         // 设置有效位
         if config.valid {
             entry.as_typed().modify(PTE::VALID::SET);
+        } else {
+            entry.as_typed().modify(PTE::VALID::CLEAR);
         }
 
         // 设置访问标志位（对应 read 标志）
         if config.read {
             entry.as_typed().modify(PTE::AF::SET);
+        } else {
+            entry.as_typed().modify(PTE::AF::CLEAR);
         }
 
         // 设置物理地址（AArch64 目录项和页表项地址布局相同）
@@ -108,6 +112,8 @@ impl PageTableEntry for Entry {
         // 设置脏位（复用 AF 位）
         if config.dirty {
             entry.as_typed().modify(PTE::AF::SET);
+        } else {
+            entry.as_typed().modify(PTE::AF::CLEAR);
         }
 
         // 设置内存属性

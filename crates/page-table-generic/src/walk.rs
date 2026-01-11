@@ -1,6 +1,4 @@
-use crate::{
-    FrameAllocator, PageTableEntry, PageTableRef, PteConfig, TableGeneric, VirtAddr, frame::Frame,
-};
+use crate::{FrameAllocator, PageTableEntry, PageTableRef, TableGeneric, VirtAddr, frame::Frame};
 
 use heapless::Vec;
 

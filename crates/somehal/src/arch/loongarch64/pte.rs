@@ -163,16 +163,30 @@ impl Debug for EntryDebug {
 
 impl PageTableEntry for Entry {
     fn from_config(config: page_table_generic::PteConfig) -> Self {
-        let mut entry = Self::empty();
+        let entry = Self::empty();
 
         // 设置有效位和存在位
         if config.valid {
             entry.as_base().modify(PTE::VALID::SET + PTE::PRESENT::SET);
+        } else {
+            entry
+                .as_base()
+                .modify(PTE::VALID::CLEAR + PTE::PRESENT::CLEAR);
+        }
+
+        if config.read {
+            entry.as_base().modify(PTE::NO_READ::CLEAR);
+        } else {
+            entry.as_base().modify(PTE::NO_READ::SET);
         }
 
         // 设置可写标志和脏位
         if config.writable {
             entry.as_base().modify(PTE::WRITE::SET + PTE::DIRTY::SET);
+        } else {
+            entry
+                .as_base()
+                .modify(PTE::WRITE::CLEAR + PTE::DIRTY::CLEAR);
         }
 
         // 设置可执行标志
@@ -192,6 +206,8 @@ impl PageTableEntry for Entry {
         // 设置脏位
         if config.dirty {
             entry.as_base().modify(PTE::DIRTY::SET);
+        } else {
+            entry.as_base().modify(PTE::DIRTY::CLEAR);
         }
 
         // 设置物理地址（关键：根据 is_dir 选择不同的布局）
@@ -398,8 +414,13 @@ pub fn find_stlb(vaddr: usize) -> WalkResult {
         println!("  条目[{}] 地址: {:#018x}", index, entry_ptr as usize);
         println!("  条目[{}] 原始值: {:#018x}", index, entry_val);
 
+        // 检查是否是大页 (H bit 6)
+        // 只检查目录项（Dir3/Dir2/Dir1/Dir0），页表项（PT）不可能是大页
+        let is_dir = !level_name.contains("PT");
+
         // 检查有效性 (V bit 0)
-        if !entry.valid() {
+        let entry_config = entry.to_config(is_dir);
+        if !entry_config.valid {
             panic!(
                 "{} 条目无效 (V=0): vaddr={:#018x}, index={}",
                 level_name, vaddr, index
@@ -414,15 +435,11 @@ pub fn find_stlb(vaddr: usize) -> WalkResult {
             );
         }
 
-        // 检查是否是大页 (H bit 6)
-        // 只检查目录项（Dir3/Dir2/Dir1/Dir0），页表项（PT）不可能是大页
-        let is_dir = !level_name.contains("PT");
-
         println!("  条目[{}] 详情: {:#x?}", index, EntryDebug(entry, is_dir));
 
-        if entry.is_huge(is_dir) {
+        if entry_config.huge {
             println!("  -> 检测到大页！");
-            let phys_base = entry.paddr(is_dir).raw() & !PAGE_MASK;
+            let phys_base = entry_config.paddr.raw() & !PAGE_MASK;
             let offset_mask = (1 << base) - 1;
             let offset = vaddr & offset_mask;
             let final_paddr = phys_base + offset;
@@ -442,7 +459,7 @@ pub fn find_stlb(vaddr: usize) -> WalkResult {
         }
 
         // 获取下一级页表的物理地址
-        table_paddr = entry.paddr(is_dir).raw() & !PAGE_MASK;
+        table_paddr = entry_config.paddr.raw() & !PAGE_MASK;
         println!("  -> 下一级页表物理地址: {:#018x}", table_paddr);
     }
 

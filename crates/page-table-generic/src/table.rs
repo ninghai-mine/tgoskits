@@ -1,8 +1,7 @@
 use core::ops::{Deref, DerefMut};
 
 use crate::{
-    FrameAllocator, PageTableEntry, PagingError, PagingResult, PhysAddr, PteConfig, TableGeneric,
-    VirtAddr,
+    FrameAllocator, PageTableEntry, PagingError, PagingResult, PhysAddr, TableGeneric, VirtAddr,
     frame::Frame,
     map::{MapConfig, MapRecursiveConfig, UnmapConfig, UnmapRecursiveConfig},
     walk::{PageTableWalker, WalkConfig},
