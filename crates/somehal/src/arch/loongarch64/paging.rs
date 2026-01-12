@@ -8,7 +8,7 @@
 use core::arch::naked_asm;
 
 use kernutil::StaticCell;
-use loongArch64::register::{crmd, stlbps, tlbidx, tlbrehi};
+use loongArch64::register::{crmd, pwch::*, pwcl::*, stlbps, tlbidx, tlbrehi};
 use num_align::NumAlign;
 use page_table_generic::{
     MapConfig, MemAttributes, PageTableEntry, PteConfig, TableGeneric, VirtAddr,
@@ -620,43 +620,18 @@ pub fn setup() {
     #[cfg(page_size_16k)]
     const PS: usize = PS_16K as usize;
 
-    tlbidx::set_ps(PS);
+    // tlbidx::set_ps(PS);
     stlbps::set_ps(PS);
-    tlbrehi::set_ps(PS);
-
-    /// PWCL(Page Walk Controller for Lower Half Address Space) CSR flags
-    ///
-    /// <https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html#page-walk-controller-for-lower-half-address-space>
-    ///
-    /// | BitRange | Name      | Value |
-    /// | ----     | ----      | ----  |
-    /// | 4:0      | PTBase    |    12 |
-    /// | 9:5      | PTWidth   |     9 |
-    /// | 14:10    | Dir1Base  |    21 |
-    /// | 19:15    | Dir1Width |     9 |
-    /// | 24:20    | Dir2Base  |    30 |
-    /// | 29:25    | Dir2Width |     9 |
-    /// | 31:30    | PTEWidth  |     0 |
-    const PWCL_VALUE: u32 = 12 | (9 << 5) | (21 << 10) | (9 << 15) | (30 << 20) | (9 << 25);
-
-    /// PWCH(Page Walk Controller for Higher Half Address Space) CSR flags
-    ///
-    /// <https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html#page-walk-controller-for-higher-half-address-space>
-    ///
-    /// | BitRange | Name                            | Value |
-    /// | ----     | ----                            | ----  |
-    /// | 5:0      | Dir3Base                        |    39 |
-    /// | 11:6     | Dir3Width                       |     9 |
-    /// | 17:12    | Dir4Base                        |     0 |
-    /// | 23:18    | Dir4Width                       |     0 |
-    /// | 24       | 0                               |     0 |
-    /// | 24       | HPTW_En(CPUCFG.2.HPTW(bit24)=1) |     0 |
-    /// | 31:25    | 0                               |     0 |
-    const PWCH_VALUE: u32 = 39 | (9 << 6) | 1 << 24;
-    // Configure page table walking
-
-    write_csr_pwctl0(PWCL_VALUE as u64);
-    write_csr_pwctl1(PWCH_VALUE as u64);
+    // tlbrehi::set_ps(PS);
+    set_dir3_base(12 + 9 + 9 + 9);
+    set_dir3_width(9);
+    set_dir2_base(12 + 9 + 9);
+    set_dir2_width(9);
+    set_dir1_base(12 + 9);
+    set_dir1_width(9);
+    set_ptbase(12);
+    set_ptwidth(9);
+    set_pte_width(8); // 64 bits -> 8 bytes
 
     // // Enable mapped address translation mode
     // crmd::set_pg(true);
@@ -730,7 +705,6 @@ pub fn relocate_kernel_to_vm_code() -> ! {
         writable: true,
         executable: true,
         mem_attr: MemAttributes::Normal,
-        global: true,
         ..Default::default()
     };
 
