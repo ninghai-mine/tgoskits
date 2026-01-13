@@ -8,23 +8,18 @@
 use core::arch::naked_asm;
 
 use kernutil::StaticCell;
-use loongArch64::register::{crmd, pgdh, pgdl, pwch::*, pwcl::*, stlbps, tlbidx, tlbrehi};
+use loongArch64::register::{pgdh, pgdl, pwch::*, pwcl::*, stlbps};
 use num_align::NumAlign;
-use page_table_generic::{
-    MapConfig, MemAttributes, PageTableEntry, PteConfig, TableGeneric, VirtAddr,
-};
-use uefi::table::cfg;
+use page_table_generic::{MapConfig, MemAttributes, PteConfig, TableGeneric, VirtAddr};
 
 // 导入 tock-registers 风格的页表项
 pub use super::pte::Entry;
 
 use crate::{
-    ArchTrait,
     arch::addrspace::to_phys,
     console::print_mapping,
     consts::PAGE_SIZE,
-    mem::{__io, __kimage_va, __va, MB, PageTableInfo, ram::Ram},
-    set_user_page_table,
+    mem::{__kimage_va, __va, MB, PageTableInfo, ram::Ram},
 };
 
 static BOOT_TABLE: StaticCell<page_table_generic::PageTable<Generic, Ram>> = StaticCell::uninit();
@@ -431,88 +426,6 @@ pub fn tlb_write_random() {
     }
 }
 
-/// 手动填充 TLB 条目（用于在启用 MMU 前预先填充关键映射）
-///
-/// # Safety
-/// 调用者必须确保：
-/// - 提供的虚拟地址和物理地址映射是正确的
-/// - ASID 值是有效的
-/// - 页大小值与系统配置一致
-#[inline(never)] // 改为 inline(never) 以便调试
-pub unsafe fn tlb_fill_indexed(
-    index: u32,
-    vaddr: usize,
-    paddr: usize,
-    asid: u64,
-    ps: u64,
-    writable: bool,
-    executable: bool,
-) {
-    // 设置 ASID 寄存器（ASID 存储在独立的 CSR 寄存器中，不是 TLBEHI 的一部分）
-    write_csr_asid(asid);
-
-    // 设置 TLBIDX: 索引 (bits[11:0]) + 页大小 (bits[29:24])
-    let tlbidx_val = (index as u64) | ((ps & 0x3f) << 24);
-    csr_write!(LOONGARCH_CSR_TLBIDX, tlbidx_val);
-
-    // 设置 TLBEHI: 虚拟地址 bits[47:13] (VPPN)
-    // 注意：ASID 不包含在 TLBEHI 中，ASID 通过 CSR_ASID 寄存器设置
-    let vppn = (vaddr as u64 >> 13) & 0x7ffffffff; // 35 位 VPPN
-    csr_write!(LOONGARCH_CSR_TLBEHI, vppn);
-
-    // 设置 TLBELO0: PPN + 标志位
-    let ppn = (paddr >> 12) & 0x3fffffffffff;
-    let mut tlbelo0_val: u64 = ppn as u64;
-
-    // bit 0: V (Valid) = 1
-    tlbelo0_val |= 1u64 << 0;
-
-    // bit 1: D (Dirty) = writable
-    if writable {
-        tlbelo0_val |= 1u64 << 1;
-    }
-
-    // bits[5:4]: MAT (Memory Attribute Type) = 0x11 (Normal memory)
-    tlbelo0_val |= 0x3 << 4;
-
-    // bit 62: NX (Not Execute) = !executable
-    if !executable {
-        tlbelo0_val |= 1u64 << 62;
-    }
-
-    csr_write!(LOONGARCH_CSR_TLBELO0, tlbelo0_val);
-
-    // 调试输出
-    println!("    TLB 寄存器值:");
-    println!(
-        "      TLBIDX: {:#018x} (index={}, ps={:#x})",
-        tlbidx_val, index, ps
-    );
-    println!("      TLBEHI: {:#018x} (VPPN={:#x})", vppn, vppn);
-    println!(
-        "      TLBELO0: {:#018x} (PPN={:#x}, V={}, D={}, NX={})",
-        tlbelo0_val,
-        ppn,
-        1,
-        if writable { 1 } else { 0 },
-        if !executable { 1 } else { 0 }
-    );
-    println!("      ASID: {:#06x}", asid);
-
-    // 写入 TLB 并添加内存屏障
-    core::arch::asm!("tlbwr", options(nomem, nostack));
-    core::arch::asm!("dbar 0", options(nomem, nostack));
-
-    // 验证：读取 TLBIDX 寄存器，确认写入成功
-    let tlbidx_read = csr_read!(LOONGARCH_CSR_TLBIDX);
-    let tlbehi_read = csr_read!(LOONGARCH_CSR_TLBEHI);
-    let tlbelo0_read = csr_read!(LOONGARCH_CSR_TLBELO0);
-    println!("    写入后读取:");
-    println!("      TLBIDX: {:#018x}", tlbidx_read);
-    println!("      TLBEHI: {:#018x}", tlbehi_read);
-    println!("      TLBELO0: {:#018x}", tlbelo0_read);
-}
-
 /// 无效化所有 TLB 条目
 #[inline(always)]
 pub fn local_flush_tlb_all() {
@@ -561,139 +474,6 @@ pub fn local_flush_tlb_page_asid(vaddr: usize, asid: u64) {
         );
     }
 }
-
-// ============================================================================
-// 页表遍历器配置
-// 参考: Linux arch/loongarch/mm/tlb.c - setup_ptwalker()
-// ============================================================================
-
-/// PWCTL0 配置结构
-#[derive(Debug, Clone, Copy)]
-pub struct PwCtl0 {
-    /// 页表基址 (PTE 偏移)
-    pub pt_base: u64,
-    /// 页表宽度
-    pub pt_width: u64,
-    /// 目录0基址 (PMD 偏移)
-    pub dir0_base: u64,
-    /// 目录0宽度
-    pub dir0_width: u64,
-    /// 目录1基址 (PUD 偏移)
-    pub dir1_base: u64,
-    /// 目录1宽度
-    pub dir1_width: u64,
-}
-
-impl PwCtl0 {
-    /// 创建默认配置
-    pub const fn new() -> Self {
-        Self {
-            pt_base: PAGE_SHIFT as u64,
-            pt_width: PTE_INDEX_BITS as u64,
-            dir0_base: PMD_SHIFT as u64,
-            dir0_width: PTE_INDEX_BITS as u64,
-            dir1_base: PUD_SHIFT as u64,
-            dir1_width: PTE_INDEX_BITS as u64,
-        }
-    }
-
-    /// 编码为 CSR 值
-    pub const fn encode(&self) -> u64 {
-        self.pt_base
-            | (self.pt_width << CSR_PWCTL0_PTWIDTH_SHIFT)
-            | (self.dir0_base << CSR_PWCTL0_DIR0BASE_SHIFT)
-            | (self.dir0_width << CSR_PWCTL0_DIR0WIDTH_SHIFT)
-            | (self.dir1_base << CSR_PWCTL0_DIR1BASE_SHIFT)
-            | (self.dir1_width << CSR_PWCTL0_DIR1WIDTH_SHIFT)
-    }
-}
-
-impl Default for PwCtl0 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// PWCTL1 配置结构
-#[derive(Debug, Clone, Copy)]
-pub struct PwCtl1 {
-    /// 目录2基址 (PGD 偏移)
-    pub dir2_base: u64,
-    /// 目录2宽度
-    pub dir2_width: u64,
-    /// 目录3基址 (保留)
-    pub dir3_base: u64,
-    /// 目录3宽度
-    pub dir3_width: u64,
-    /// 是否启用硬件页表遍历
-    pub ptw_enable: bool,
-}
-
-impl PwCtl1 {
-    /// 创建默认配置
-    pub const fn new() -> Self {
-        Self {
-            dir2_base: PGDIR_SHIFT as u64,
-            dir2_width: PTE_INDEX_BITS as u64,
-            dir3_base: 0,
-            dir3_width: 0,
-            ptw_enable: false,
-        }
-    }
-
-    /// 编码为 CSR 值
-    pub const fn encode(&self) -> u64 {
-        let mut val = self.dir2_base
-            | (self.dir2_width << CSR_PWCTL1_DIR2WIDTH_SHIFT)
-            | (self.dir3_base << CSR_PWCTL1_DIR3BASE_SHIFT)
-            | (self.dir3_width << CSR_PWCTL1_DIR3WIDTH_SHIFT);
-        if self.ptw_enable {
-            val |= CSR_PWCTL1_PTW;
-        }
-        val
-    }
-}
-
-impl Default for PwCtl1 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================================
-// 页表初始化
-// ============================================================================
-
-/// 设置页表遍历器
-/// 参考: Linux arch/loongarch/mm/tlb.c - setup_ptwalker()
-pub fn setup_ptwalker() {
-    let pwctl0 = PwCtl0::new();
-    let pwctl1 = PwCtl1::new();
-
-    write_csr_pwctl0(pwctl0.encode());
-    write_csr_pwctl1(pwctl1.encode());
-}
-
-// /// 初始化页表相关寄存器
-// /// 参考: Linux arch/loongarch/mm/tlb.c - tlb_init()
-// pub fn setup_with_pg_dir(swapper_pg_dir: usize, invalid_pg_dir: usize) {
-//     // 设置页大小
-//     write_csr_pagesize(PS_DEFAULT_SIZE);
-//     write_csr_stlbpgsize(PS_DEFAULT_SIZE);
-//     write_csr_tlbrefill_pagesize(PS_DEFAULT_SIZE);
-
-//     // 设置页表遍历器
-//     setup_ptwalker();
-
-//     // 设置页表基地址
-//     // PGDH: 高地址空间 (内核空间)
-//     write_csr_pgdh(swapper_pg_dir as u64);
-//     // PGDL: 低地址空间 (用户空间，初始化为无效页表)
-//     write_csr_pgdl(invalid_pg_dir as u64);
-
-//     // 刷新 TLB
-//     local_flush_tlb_all();
-// }
 
 /// 简化的页表初始化 (仅设置页大小和遍历器)
 pub fn setup() {
@@ -834,10 +614,7 @@ pub fn relocate_kernel_to_vm_code() -> ! {
     let v_entry = __kimage_va(mmu_entry_phys) as usize;
 
     println!("Setting up page table...");
-    // 先设置页表基地址，但还没有启用 MMU
-    // super::Arch::set_kernel_page_table(tb);
-    // super::Arch::set_user_page_table(tb);
-    // 设置内核页表基地址到 PGDH (高地址空间)
+
     pgdh::set_base(tb.addr as _);
     pgdl::set_base(tb.addr as _);
 
@@ -849,9 +626,6 @@ pub fn relocate_kernel_to_vm_code() -> ! {
     println!("Enabling MMU...");
     // 配置页大小并启用 MMU
     setup();
-
-    // 打印寄存器状态
-    // print_registers();
 
     println!("MMU enabled, jumping to {v_entry:#x}, sp={v_sp:#x}");
 
@@ -867,196 +641,4 @@ extern "C" fn relocate_kernel(entry: usize, sp: usize) {
         jr $a0
         ",
     )
-}
-
-fn print_registers() {
-    use loongArch64::register::{crmd, stlbps, tlbidx, tlbrehi};
-
-    println!("\n=== LoongArch64 页表寄存器状态 ===\n");
-
-    // 1. CRMD 寄存器 (0x0)
-    let crmd_val = crmd::read();
-
-    let crmd_raw = csr_read!(0x0u32);
-    println!("CRMD (0x0) 控制模式寄存器:");
-    println!("  原始值: {:#018x}", crmd_raw);
-    println!(
-        "  PG (页面使能): {}",
-        if crmd_val.pg() {
-            "✓ 启用"
-        } else {
-            "✗ 禁用"
-        }
-    );
-    println!("  DA (直接): {}", crmd_val.da());
-    println!(
-        "  IE (中断使能): {}",
-        if crmd_val.ie() {
-            "✓ 启用"
-        } else {
-            "✗ 禁用"
-        }
-    );
-    println!("  PLV (特权级): {}", crmd_val.plv() as u8);
-
-    // 2. 页表基地址寄存器
-    println!("\n页表基地址寄存器:");
-    println!("  ASID (0x18) 地址空间标识符: {:#06x}", read_csr_asid());
-    println!(
-        "  PGDL (0x19) 低地址空间页表基址: {:#018x}",
-        read_csr_pgdl()
-    );
-    println!(
-        "  PGDH (0x1a) 高地址空间页表基址: {:#018x}",
-        read_csr_pgdh()
-    );
-    println!("  PGD (0x1b) 当前页表基址: {:#018x}", read_csr_pgd());
-
-    // 3. PWCTL0 寄存器
-    let pwctl0 = read_csr_pwctl0();
-    println!("\nPWCTL0 (0x1c) 页表遍历控制寄存器0:");
-    println!("  原始值: {:#018x}", pwctl0);
-    let pt_base = pwctl0 & 0x1f;
-    let pt_width = (pwctl0 >> 5) & 0x1f;
-    let dir0_base = (pwctl0 >> 10) & 0x1f;
-    let dir0_width = (pwctl0 >> 15) & 0x1f;
-    let dir1_base = (pwctl0 >> 20) & 0x1f;
-    let dir1_width = (pwctl0 >> 25) & 0x1f;
-    let ptew = (pwctl0 >> 30) & 0x3;
-    println!("  PTBase (页表基址): {} (期望: 12)", pt_base);
-    println!("  PTWidth (页表宽度): {} (期望: 9)", pt_width);
-    println!("  Dir0Base (目录0基址/PMD): {} (期望: 21)", dir0_base);
-    println!("  Dir0Width (目录0宽度): {} (期望: 9)", dir0_width);
-    println!("  Dir1Base (目录1基址/PUD): {} (期望: 30)", dir1_base);
-    println!("  Dir1Width (目录1宽度): {} (期望: 9)", dir1_width);
-    println!("  PTEW (页表项宽度): {} (期望: 0=8字节)", ptew);
-
-    // 4. PWCTL1 寄存器
-    let pwctl1 = read_csr_pwctl1();
-    println!("\nPWCTL1 (0x1d) 页表遍历控制寄存器1:");
-    println!("  原始值: {:#018x}", pwctl1);
-    let dir2_base = pwctl1 & 0x3f;
-    let dir2_width = (pwctl1 >> 6) & 0x3f;
-    let dir3_base = (pwctl1 >> 12) & 0x3f;
-    let dir3_width = (pwctl1 >> 18) & 0x3f;
-    let ptw_enable = (pwctl1 >> 24) & 0x1;
-    println!("  Dir2Base (目录2基址/PGD): {} (期望: 39)", dir2_base);
-    println!("  Dir2Width (目录2宽度): {} (期望: 9)", dir2_width);
-    println!("  Dir3Base (目录3基址): {} (期望: 0)", dir3_base);
-    println!("  Dir3Width (目录3宽度): {} (期望: 0)", dir3_width);
-    println!(
-        "  PTW (硬件页表遍历): {}",
-        if ptw_enable != 0 { "启用" } else { "禁用" }
-    );
-
-    // 5. 页大小寄存器
-    println!("\n页大小寄存器:");
-    let tlbidx_val = tlbidx::read();
-    let ps_tlbidx = tlbidx_val.ps() as usize;
-    println!(
-        "  TLBIDX.PS (0x10) TLB页大小: {:#04x} (期望: {:#04x}=4KB)",
-        ps_tlbidx, PS_4K
-    );
-    let stlbps_val = stlbps::read();
-    let ps_stlb = stlbps_val.ps() as usize;
-    println!(
-        "  STLBPS.PS (0x1e) STLB页大小: {:#04x} (期望: {:#04x}=4KB)",
-        ps_stlb, PS_4K
-    );
-
-    let tlbrehi_val = tlbrehi::read();
-    let ps_tlbrefill = tlbrehi_val.ps() as usize;
-    println!(
-        "  TLBREHI.PS (0x8e) TLB Refill页大小: {:#04x} (期望: {:#04x}=4KB)",
-        ps_tlbrefill, PS_4K
-    );
-    let stlbpgsize = read_csr_stlbpgsize();
-    println!("  STLBPGSIZE (0x1e) 原始值: {:#018x}", stlbpgsize);
-
-    // 6. 配置验证
-    println!("\n=== 配置验证 ===");
-
-    // 验证页大小
-    let page_size_valid = ps_tlbidx == PS_4K && ps_stlb == PS_4K && ps_tlbrefill == PS_4K;
-    if page_size_valid {
-        println!("✓ 页大小配置正确: 4KB (PS={:#04x})", PS_4K);
-    } else {
-        println!("✗ 页大小配置不正确!");
-        println!(
-            "  TLBIDX.PS = {:#04x}, STLBPS.PS = {:#04x}, TLBREHI.PS = {:#04x}",
-            ps_tlbidx, ps_stlb, ps_tlbrefill
-        );
-    }
-
-    // 验证4级页表配置
-    let four_level_valid = pt_base == 12
-        && pt_width == 9
-        && dir0_base == 21
-        && dir0_width == 9
-        && dir1_base == 30
-        && dir1_width == 9
-        && dir2_base == 39
-        && dir2_width == 9;
-
-    if four_level_valid {
-        println!("✓ 4级页表配置正确:");
-        println!("  PTE:  bits[12..21]  (9 bits, 512 entries)");
-        println!("  PMD:  bits[21..30]  (9 bits, 512 entries)");
-        println!("  PUD:  bits[30..39]  (9 bits, 512 entries)");
-        println!("  PGD:  bits[39..48]  (9 bits, 512 entries)");
-    } else {
-        println!("✗ 4级页表配置不正确!");
-        println!(
-            "  PTBase={}, PTWidth={}, Dir0Base={}, Dir0Width={}",
-            pt_base, pt_width, dir0_base, dir0_width
-        );
-        println!(
-            "  Dir1Base={}, Dir1Width={}, Dir2Base={}, Dir2Width={}",
-            dir1_base, dir1_width, dir2_base, dir2_width
-        );
-    }
-
-    // 验证单页表项（8字节）
-    let pte_width_valid = ptew == 0;
-    if pte_width_valid {
-        println!("✓ 页表项宽度正确: 8字节 (PTEW=0)");
-    } else {
-        println!("✗ 页表项宽度不正确: PTEW={} (期望: 0)", ptew);
-    }
-
-    // 验证 CRMD.PG
-    let pg_enabled = crmd_val.pg();
-    if pg_enabled {
-        println!("✓ 页表转换已启用 (CRMD.PG=1)");
-    } else {
-        println!("✗ 页表转换未启用 (CRMD.PG=0)");
-    }
-
-    // 总体验证
-    let all_valid = page_size_valid && four_level_valid && pte_width_valid && pg_enabled;
-    println!(
-        "\n总体验证结果: {}",
-        if all_valid {
-            "✓ 通过"
-        } else {
-            "✗ 失败"
-        }
-    );
-
-    // ========== 页表遍历测试 ==========
-    println!("\n========== 页表遍历测试 ==========\n");
-
-    // 测试固定映射地址
-    let test_vaddr = 0xFFFFFFFF800153A0usize;
-    println!("测试虚拟地址: {:#018x}", test_vaddr);
-
-    // 执行页表遍历 - 实际调用函数进行分析
-    println!("开始页表遍历（带详细调试输出）...\n");
-
-    // 添加超时保护的简单实现：使用循环计数器
-    // 如果在某个步骤停留太久，可以通过串口输出看到当前位置
-    let _result = super::pte::find_stlb(test_vaddr);
-
-    println!("\n✓ 页表遍历完成");
-    println!("====================================\n");
 }
