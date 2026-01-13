@@ -1,5 +1,6 @@
 use core::arch::asm;
 
+use aarch64_cpu::asm::barrier::{self, dsb, isb};
 use num_align::NumAlign;
 use page_table_generic::{MapConfig, MemAttributes, PteConfig};
 
@@ -118,6 +119,11 @@ pub fn enable_mmu() -> ! {
     setup_sctlr();
     println!("MMU enabled, jumping to {v_entry:#x}, sp={v_sp:#x}");
     crate::mem::mmu::set_mmu_enabled();
+
+    super::relocate::reset();
+    dsb(barrier::SY);
+    isb(barrier::SY);
+
     // Jump to mmu_entry using physical address
     unsafe {
         asm!(
