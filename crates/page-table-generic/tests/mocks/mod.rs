@@ -118,7 +118,7 @@ impl PageTableEntry for PteImpl {
             },
         }
     }
-    
+
     fn valid(&self) -> bool {
         self.reg().is_set(PTE64::VALID)
     }

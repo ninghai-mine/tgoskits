@@ -129,5 +129,6 @@ fn eif_entry() {
 pub(crate) fn mmu_entry() -> ! {
     println!("MMU ok...");
     super::relocate::reset();
+    println!("Relocated.");
     crate::prime_entry()
 }

@@ -438,7 +438,7 @@ pub fn tlb_write_random() {
 /// - 提供的虚拟地址和物理地址映射是正确的
 /// - ASID 值是有效的
 /// - 页大小值与系统配置一致
-#[inline(never)]  // 改为 inline(never) 以便调试
+#[inline(never)] // 改为 inline(never) 以便调试
 pub unsafe fn tlb_fill_indexed(
     index: u32,
     vaddr: usize,
@@ -457,7 +457,7 @@ pub unsafe fn tlb_fill_indexed(
 
     // 设置 TLBEHI: 虚拟地址 bits[47:13] (VPPN)
     // 注意：ASID 不包含在 TLBEHI 中，ASID 通过 CSR_ASID 寄存器设置
-    let vppn = (vaddr as u64 >> 13) & 0x7ffffffff;  // 35 位 VPPN
+    let vppn = (vaddr as u64 >> 13) & 0x7ffffffff; // 35 位 VPPN
     csr_write!(LOONGARCH_CSR_TLBEHI, vppn);
 
     // 设置 TLBELO0: PPN + 标志位
@@ -484,10 +484,19 @@ pub unsafe fn tlb_fill_indexed(
 
     // 调试输出
     println!("    TLB 寄存器值:");
-    println!("      TLBIDX: {:#018x} (index={}, ps={:#x})", tlbidx_val, index, ps);
+    println!(
+        "      TLBIDX: {:#018x} (index={}, ps={:#x})",
+        tlbidx_val, index, ps
+    );
     println!("      TLBEHI: {:#018x} (VPPN={:#x})", vppn, vppn);
-    println!("      TLBELO0: {:#018x} (PPN={:#x}, V={}, D={}, NX={})",
-        tlbelo0_val, ppn, 1, if writable { 1 } else { 0 }, if !executable { 1 } else { 0 });
+    println!(
+        "      TLBELO0: {:#018x} (PPN={:#x}, V={}, D={}, NX={})",
+        tlbelo0_val,
+        ppn,
+        1,
+        if writable { 1 } else { 0 },
+        if !executable { 1 } else { 0 }
+    );
     println!("      ASID: {:#06x}", asid);
 
     // 写入 TLB 并添加内存屏障
@@ -842,12 +851,22 @@ pub fn relocate_kernel_to_vm_code() -> ! {
     setup();
 
     // 打印寄存器状态
-    print_registers();
+    // print_registers();
 
     println!("MMU enabled, jumping to {v_entry:#x}, sp={v_sp:#x}");
 
+    test_print(b'A');
+
     relocate_kernel(v_entry, v_sp);
     unreachable!()
+}
+
+fn test_print(b: u8) {
+    unsafe {
+        (0x800000001fe001e0usize as *mut u8).write_volatile(b);
+        (0x800000001fe001e0usize as *mut u8).write_volatile(b'\r');
+        (0x800000001fe001e0usize as *mut u8).write_volatile(b'\n');
+    }
 }
 
 #[unsafe(naked)]
