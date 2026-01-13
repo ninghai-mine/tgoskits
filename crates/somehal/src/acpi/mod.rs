@@ -3,6 +3,7 @@ use core::{ffi::c_void, ptr::NonNull};
 
 pub(crate) mod earlycon;
 mod handle;
+pub mod power;
 
 use crate::mem::phys_to_virt;
 pub(crate) use handle::AcpiHandle;
@@ -41,4 +42,8 @@ pub fn tables() -> Result<AcpiTables<AcpiHandle>, acpi::AcpiError> {
         let h = AcpiHandle;
         ::acpi::AcpiTables::from_rsdp(h, rsdp)
     }
+}
+
+pub fn shutdown() -> ! {
+    power::shutdown()
 }

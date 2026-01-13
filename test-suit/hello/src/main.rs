@@ -9,6 +9,6 @@ extern crate sparreal_rt;
 #[sparreal_rt::entry]
 fn main() {
     println!("========================================");
-    println!("All tests passed!");
+    // println!("All tests passed!");
     println!("========================================");
 }

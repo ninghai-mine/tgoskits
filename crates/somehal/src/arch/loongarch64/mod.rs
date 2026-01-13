@@ -91,9 +91,7 @@ impl ArchTrait for Arch {
     }
 
     fn shutdown() -> ! {
-        loop {
-            unsafe { loongArch64::asm::idle() };
-        }
+        crate::acpi::shutdown()
     }
 
     fn irq_all_is_enabled() -> bool {
