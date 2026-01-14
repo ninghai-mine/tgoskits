@@ -1,15 +1,23 @@
 #![cfg_attr(not(any(windows, unix)), no_std)]
 #![doc = include_str!("../README.md")]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
-use core::{ptr::NonNull, sync::atomic::AtomicBool};
+use core::{ops::Deref, ptr::NonNull};
+
+use alloc::sync::Arc;
 
 mod osal;
-mod stream;
 
-pub use stream::*;
+mod array;
+mod common;
+mod dbox;
+
+pub use array::*;
+pub use dbox::*;
+// mod stream;
+
+// pub use stream::*;
 
 /// DMA 传输方向
 ///
@@ -32,26 +40,17 @@ pub type DmaAddr = u64;
 pub type PhysAddr = u64;
 
 /// DMA 错误类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmaError {
-    /// 无效地址
-    InvalidAddress,
-    /// 映射失败
-    MappingFailed,
-    /// 超出 DMA 地址范围
-    AddressOutOfRange,
-    /// 内存分配失败
-    AllocationFailed,
+    #[error("DMA allocation failed")]
+    NoMemory,
+    #[error("Invalid layout for DMA allocation")]
+    LayoutError,
 }
 
-impl core::fmt::Display for DmaError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            DmaError::InvalidAddress => write!(f, "Invalid DMA address"),
-            DmaError::MappingFailed => write!(f, "DMA mapping failed"),
-            DmaError::AddressOutOfRange => write!(f, "Address out of DMA range"),
-            DmaError::AllocationFailed => write!(f, "DMA allocation failed"),
-        }
+impl From<core::alloc::LayoutError> for DmaError {
+    fn from(_: core::alloc::LayoutError) -> Self {
+        DmaError::LayoutError
     }
 }
 
@@ -62,16 +61,17 @@ pub struct DmaHandle {
     pub layout: core::alloc::Layout,
 }
 
-impl DmaHandle {
-    pub fn size(&self) -> usize {
-        self.layout.size()
+impl Deref for DmaHandle {
+    type Target = core::alloc::Layout;
+    fn deref(&self) -> &Self::Target {
+        &self.layout
     }
 }
 
 /// 操作系统抽象层 trait
 ///
 /// 用于适配不同的 OS/平台
-pub trait Osal {
+pub trait Osal: Sync + Send + 'static {
     fn page_size(&self) -> usize;
 
     /// 将虚拟地址映射到 DMA 地址
@@ -93,66 +93,59 @@ pub trait Osal {
 
     /// 分配 DMA 可访问内存
     /// # Safety
-    /// 调用者必须确保 layout 合法
-    unsafe fn alloc(&self, dma_mask: u64, layout: core::alloc::Layout) -> DmaHandle;
+    ///
+    /// - 调用者必须确保 layout 合法
+    /// - 返回的内存必须保证连续
+    unsafe fn alloc_coherent(&self, layout: core::alloc::Layout) -> Option<DmaHandle>;
 
     /// 释放 DMA 内存
     /// # Safety
     /// 调用者必须确保 ptr 和 layout 与 alloc 时匹配
-    unsafe fn dealloc(&self, handle: DmaHandle);
-}
+    unsafe fn dealloc_coherent(&self, handle: DmaHandle);
 
-static mut OSAL: &'static dyn Osal = &osal::NopOsal;
-static INIT: AtomicBool = AtomicBool::new(false);
-
-/// 初始化 DMA API
-pub fn init(osal: &'static dyn Osal) {
-    if INIT.load(core::sync::atomic::Ordering::Acquire) {
-        return;
+    fn prepare_read(&self, ptr: NonNull<u8>, size: usize, direction: Direction) {
+        if matches!(direction, Direction::FromDevice | Direction::Bidirectional) {
+            self.invalidate(ptr, size);
+        }
     }
 
-    unsafe {
-        OSAL = osal;
+    fn confirm_write(&self, ptr: NonNull<u8>, size: usize, direction: Direction) {
+        if matches!(direction, Direction::ToDevice | Direction::Bidirectional) {
+            self.flush(ptr, size)
+        }
     }
-    INIT.store(true, core::sync::atomic::Ordering::Release);
 }
 
-fn get_osal() -> &'static dyn Osal {
-    if !INIT.load(core::sync::atomic::Ordering::Acquire) {
-        panic!("dma-api not initialized");
+#[derive(Clone)]
+pub struct DmaApi {
+    osal: Arc<dyn Osal>,
+}
+
+impl DmaApi {
+    pub fn new(osal: impl Osal) -> Self {
+        Self {
+            osal: Arc::new(osal),
+        }
     }
-    unsafe { OSAL }
-}
 
-/// DMA 缓存无效化操作（TODO: DMA 缓存一致性管理功能）
-#[allow(dead_code)]
-fn invalidate(addr: NonNull<u8>, size: usize) {
-    get_osal().invalidate(addr, size)
-}
+    pub fn osal(&self) -> &Arc<dyn Osal> {
+        &self.osal
+    }
 
-/// DMA 缓存写回操作（TODO: DMA 缓存一致性管理功能）
-#[allow(dead_code)]
-fn flush(addr: NonNull<u8>, size: usize) {
-    get_osal().flush(addr, size)
-}
+    pub fn new_array<T>(
+        &self,
+        size: usize,
+        align: usize,
+        direction: Direction,
+    ) -> Result<array::DArray<T>, DmaError> {
+        array::DArray::new_zero(&self.osal, size, align, direction)
+    }
 
-/// 分配 DMA 可访问内存
-pub fn alloc(dma_mask: u64, layout: core::alloc::Layout) -> DmaHandle {
-    unsafe { get_osal().alloc(dma_mask, layout) }
-}
-
-/// 释放 DMA 内存
-#[allow(dead_code)]
-pub fn dealloc(h: DmaHandle) {
-    unsafe { get_osal().dealloc(h) }
-}
-
-fn map(addr: NonNull<u8>, size: usize, direction: Direction) -> DmaHandle {
-    get_osal().map(addr, size, direction)
-}
-
-/// 解除 DMA 映射（TODO: DMA 缓存一致性管理功能）
-#[allow(dead_code)]
-fn unmap(h: DmaHandle) {
-    get_osal().unmap(h)
+    pub fn new_box<T>(
+        &self,
+        align: usize,
+        direction: Direction,
+    ) -> Result<dbox::DBox<T>, DmaError> {
+        dbox::DBox::new_zero(&self.osal, align, direction)
+    }
 }
