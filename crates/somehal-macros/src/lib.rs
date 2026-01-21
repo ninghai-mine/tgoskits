@@ -15,6 +15,13 @@ mod trap;
 ///
 /// The type of the specified function must be `[unsafe] fn() -> !` (never ending function)
 ///
+/// # 属性参数
+///
+/// 此宏**必需**接受一个内核类型参数：
+///
+/// - **参数**: 指定实现 `somehal::KernelOp` trait 的类型标识符
+/// - **行为**: 自动在函数开头插入 `somehal::init(&<type>)` 调用
+///
 /// # Properties
 ///
 /// The entry point will be called by the reset handler. The program can't reference to the entry
@@ -22,13 +29,20 @@ mod trap;
 ///
 /// # Examples
 ///
-/// - Simple entry point
+/// - Entry point with kernel initialization
 ///
 /// ``` no_run
 /// # #![no_main]
 /// # use pie_boot::entry;
-/// #[entry]
+/// # struct Kernel;
+/// # impl somehal::KernelOp for Kernel {
+/// #     fn ioremap(&self, paddr: usize, size: usize) -> somehal::PagingResult<*mut u8> {
+/// #         Ok(std::ptr::null_mut())
+/// #     }
+/// # }
+/// #[entry(Kernel)]
 /// fn main() -> ! {
+///     // somehal::init(&Kernel) 已自动生成
 ///     loop {
 ///         /* .. */
 ///     }

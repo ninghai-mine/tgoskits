@@ -11,9 +11,8 @@ pub use sparreal_kernel::*;
 
 mod hal_impl;
 
-#[somehal::entry]
+#[somehal::entry(Kernel)]
 fn main() -> ! {
-    somehal::init(&Kernel);
     sparreal_kernel::run_kernel()
 }
 

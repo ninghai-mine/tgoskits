@@ -1,7 +1,38 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{ItemFn, Visibility, parse, parse_macro_input, spanned::Spanned};
+
+/// Entry 宏参数解析结构
+///
+/// 必须指定内核类型参数，如 `#[entry(Kernel)]`
+struct EntryArgs {
+    kernel_type: syn::Ident,
+}
+
+impl syn::parse::Parse for EntryArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // 空参数列表时报错
+        if input.is_empty() {
+            return Err(syn::Error::new(
+                input.span(),
+                "this attribute requires a kernel type argument, e.g., `#[entry(Kernel)]`",
+            ));
+        }
+
+        // 解析类型标识符（如 Kernel）
+        let kernel_type = input.parse::<syn::Ident>()?;
+
+        // 确保没有额外参数
+        if !input.is_empty() {
+            return Err(syn::Error::new(
+                input.span(),
+                "expected a single type identifier argument",
+            ));
+        }
+
+        Ok(EntryArgs { kernel_type })
+    }
+}
 
 pub fn entry(args: TokenStream, input: TokenStream, name: &str) -> TokenStream {
     let f = parse_macro_input!(input as ItemFn);
@@ -29,11 +60,11 @@ pub fn entry(args: TokenStream, input: TokenStream, name: &str) -> TokenStream {
         .into();
     }
 
-    if !args.is_empty() {
-        return parse::Error::new(Span::call_site(), "This attribute accepts no arguments")
-            .to_compile_error()
-            .into();
-    }
+    // 解析宏参数
+    let entry_args = match syn::parse::<EntryArgs>(args) {
+        Ok(args) => args,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     // XXX should we blacklist other attributes?
     let attrs = f.attrs;
@@ -41,12 +72,15 @@ pub fn entry(args: TokenStream, input: TokenStream, name: &str) -> TokenStream {
     let args = f.sig.inputs;
     let stmts = f.block.stmts;
     let name = format_ident!("{}", name);
+    let kernel_type = entry_args.kernel_type;
 
+    // 生成代码：自动插入 somehal::init() 调用
     quote!(
         #[allow(non_snake_case)]
         #[unsafe(no_mangle)]
         #(#attrs)*
         pub #unsafety extern "C" fn #name(#args) {
+            somehal::init(&#kernel_type);
             #(#stmts)*
         }
     )
