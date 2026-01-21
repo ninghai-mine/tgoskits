@@ -1,8 +1,7 @@
 use crate::ArchTrait;
 
-pub fn systimer_irq() -> IrqId {
-    crate::arch::Arch::systimer_irq()
-}
+#[allow(unused_imports)]
+pub use crate::arch::irq::*;
 
 pub fn irq_local_is_enabled() -> bool {
     crate::arch::Arch::irq_all_is_enabled()

@@ -68,7 +68,6 @@ pub trait ArchTrait {
     #[cfg(uspace)]
     fn set_user_page_table(val: PageTableInfo);
 
-    fn systimer_irq() -> IrqId;
     fn shutdown() -> !;
 
     fn systimer_enable();

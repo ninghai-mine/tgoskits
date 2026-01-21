@@ -6,6 +6,7 @@ mod cache;
 mod context;
 pub(crate) mod entry;
 mod head;
+pub(crate) mod irq;
 mod paging;
 pub(crate) mod pte;
 mod register;
@@ -21,7 +22,7 @@ use loongArch64::{
 pub use paging::Entry as Pte;
 pub use relocate::relocate;
 
-use crate::{ArchTrait, arch::register::irq::TI, efi_stub, irq::IrqId};
+use crate::{ArchTrait, efi_stub, irq::IrqId};
 
 const MIN_TICKS: usize = 4;
 
@@ -42,10 +43,6 @@ impl ArchTrait for Arch {
 
     fn per_cpu_trap_init(is_primary: bool) {
         trap::per_cpu_trap_init(is_primary);
-    }
-
-    fn systimer_irq() -> IrqId {
-        IrqId::new(TI as usize)
     }
 
     fn systimer_enable() {

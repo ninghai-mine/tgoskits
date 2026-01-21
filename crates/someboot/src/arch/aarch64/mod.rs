@@ -13,6 +13,7 @@ mod addrspace;
 mod context;
 mod entry;
 mod head;
+pub(crate) mod irq;
 pub mod paging;
 mod power;
 pub mod relocate;
@@ -26,12 +27,8 @@ use crate::{
     ArchTrait,
     arch::{addrspace::PAGE_OFFSET, trap::trap_addr},
     consts::VM_LOAD_ADDRESS,
-    irq::IrqId,
     mem::{__kimage_va_to_pa, PageTableInfo},
 };
-
-// ARM Generic Timer IRQ number (PPI 30)
-const TIMER_IRQ: usize = 30;
 
 pub struct Arch;
 
@@ -52,10 +49,6 @@ impl ArchTrait for Arch {
         #[cfg(uspace)]
         elx::set_user_table(PageTableInfo { asid: 0, addr: 0 });
         elx::flush_tlb(None);
-    }
-
-    fn systimer_irq() -> IrqId {
-        TIMER_IRQ.into()
     }
 
     fn systimer_enable() {
