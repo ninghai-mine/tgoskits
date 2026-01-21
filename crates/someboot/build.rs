@@ -4,6 +4,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(efi)");
     println!("cargo::rustc-check-cfg=cfg(page_size_4k)");
     println!("cargo::rustc-check-cfg=cfg(page_size_16k)");
+    println!("cargo::rustc-check-cfg=cfg(uspace)");
+    println!("cargo::rustc-check-cfg=cfg(hv)");
 
     let target = std::env::var("TARGET").unwrap();
 
@@ -32,6 +34,12 @@ fn main() {
     };
 
     build.prepare();
+
+    if build.hv {
+        println!("cargo:rustc-cfg=hv");
+    } else if build.uspace {
+        println!("cargo:rustc-cfg=uspace");
+    }
 
     if build.page_size == 4096 {
         println!("cargo:rustc-cfg=page_size_4k");
@@ -87,9 +95,8 @@ impl Build {
         if self.hv {
             self.uspace = false;
             self.kernel_vaddr = 0xffff_8000_0000;
-        }
-        if self.uspace {
-            // self.kernel_vaddr = 0xFFFF_9000_0020_0000;
+        } else {
+            self.uspace = true;
             self.kernel_vaddr = 0xffff_ffff_8000_0000;
         }
 

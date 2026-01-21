@@ -15,13 +15,13 @@ mod trap;
 use core::hint::spin_loop;
 
 use loongArch64::{
-    register::{asid, crmd, eentry, pgdh, pgdl, tcfg, ticlr},
+    register::*,
     time::{Time, get_timer_freq},
 };
 pub use paging::Entry as Pte;
 pub use relocate::relocate;
 
-use crate::{ArchTrait, arch::register::irq::TI, efi_stub, irq::IrqId, mem::PageTableInfo};
+use crate::{ArchTrait, arch::register::irq::TI, efi_stub, irq::IrqId};
 
 const MIN_TICKS: usize = 4;
 
@@ -183,14 +183,16 @@ impl ArchTrait for Arch {
         addrspace::to_phys(vaddr as usize)
     }
 
-    fn user_page_table() -> PageTableInfo {
-        PageTableInfo {
+    #[cfg(uspace)]
+    fn user_page_table() -> crate::mem::PageTableInfo {
+        crate::mem::PageTableInfo {
             addr: pgdl::read().base(),
             asid: asid::read().asid(),
         }
     }
 
-    fn set_user_page_table(val: PageTableInfo) {
+    #[cfg(uspace)]
+    fn set_user_page_table(val: crate::mem::PageTableInfo) {
         // 设置用户页表基地址到 PGDL (低地址空间)
         pgdl::set_base(val.addr);
         // 设置 ASID
