@@ -1,8 +1,11 @@
 #![cfg(all(test, any(unix, windows)))]
 
+mod test_helpers;
+
 use std::{num::NonZeroUsize, ptr::NonNull};
 
 use dma_api::*;
+use test_helpers::{DmaOperation, TrackingDmaOp};
 
 #[test]
 fn test_read() {
@@ -168,11 +171,6 @@ impl DmaOp for Impled {
     }
 
     unsafe fn dealloc_coherent(&self, handle: DmaHandle) {
-        println!(
-            "dealloc_coherent size: {:#x}, align: {:#x}",
-            handle.size(),
-            handle.align()
-        );
         unsafe { std::alloc::dealloc(handle.origin_virt.as_ptr(), handle.layout) };
     }
 }
@@ -216,5 +214,286 @@ impl DmaOp for MaskedDma {
 
     unsafe fn dealloc_coherent(&self, handle: DmaHandle) {
         unsafe { std::alloc::dealloc(handle.origin_virt.as_ptr(), handle.layout) };
+    }
+}
+
+// ============================================================================
+// 新增测试: 地址正确性测试
+// ============================================================================
+
+#[test]
+fn test_single_element_address() {
+    let tracker = Box::new(TrackingDmaOp::new(0));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+
+    let mut dma: DArray<u32> = dev.new_array(1, 64, Direction::ToDevice).unwrap();
+
+    tracker.clear();
+    dma.set(0, 0x12345678);
+
+    // 验证有且仅有一次 flush 操作,大小为 4 字节 (u32)
+    let ops = tracker.get_operations();
+    let flush_ops: Vec<_> = ops
+        .iter()
+        .filter_map(|op| {
+            if let DmaOperation::Flush { size, .. } = op {
+                Some(*size)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert_eq!(flush_ops.len(), 1);
+    assert_eq!(flush_ops[0], 4); // u32 = 4 bytes
+}
+
+#[test]
+fn test_multi_element_offset() {
+    let tracker = Box::new(TrackingDmaOp::new(0));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+
+    let mut dma: DArray<u32> = dev.new_array(10, 64, Direction::ToDevice).unwrap();
+    tracker.clear();
+
+    // 设置 index 0, 1, 2
+    dma.set(0, 0);
+    dma.set(1, 1);
+    dma.set(2, 2);
+
+    // u32 = 4 bytes, 应该有 3 次 flush 操作,每次大小都是 4 字节
+    let ops = tracker.get_operations();
+    let flush_ops: Vec<_> = ops
+        .iter()
+        .filter_map(|op| {
+            if let DmaOperation::Flush { size, addr } = op {
+                Some((*addr, *size))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert_eq!(flush_ops.len(), 3);
+
+    // 验证每次 flush 的大小都是 4 字节
+    for (addr, size) in &flush_ops {
+        assert_eq!(*size, 4);
+    }
+
+    // 验证地址是递增的,每次增加 4 字节
+    assert_eq!(flush_ops[1].0 - flush_ops[0].0, 4); // index 1 - index 0
+    assert_eq!(flush_ops[2].0 - flush_ops[1].0, 4); // index 2 - index 1
+}
+
+#[test]
+fn test_different_type_sizes() {
+    let tracker = Box::new(TrackingDmaOp::new(0));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+
+    // u8 = 1 byte
+    let mut dma_u8: DArray<u8> = dev.new_array(5, 8, Direction::ToDevice).unwrap();
+    tracker.clear();
+    dma_u8.set(3, 1);
+
+    let ops = tracker.get_operations();
+    if let Some(DmaOperation::Flush { size, .. }) = ops.last() {
+        assert_eq!(*size, 1); // u8 = 1 byte
+    } else {
+        panic!("Expected Flush operation");
+    }
+
+    // u64 = 8 bytes
+    let mut dma_u64: DArray<u64> = dev.new_array(5, 8, Direction::ToDevice).unwrap();
+    tracker.clear();
+    dma_u64.set(2, 2);
+
+    let ops = tracker.get_operations();
+    if let Some(DmaOperation::Flush { size, .. }) = ops.last() {
+        assert_eq!(*size, 8); // u64 = 8 bytes
+    } else {
+        panic!("Expected Flush operation");
+    }
+}
+
+// ============================================================================
+// 新增测试: Direction 行为测试
+// ============================================================================
+
+#[test]
+fn test_direction_to_device() {
+    let tracker = Box::new(TrackingDmaOp::new(0x1000));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+    let mut dma: DArray<u32> = dev.new_array(10, 64, Direction::ToDevice).unwrap();
+
+    tracker.clear();
+
+    // set 应该 flush
+    dma.set(0, 1);
+    assert_eq!(tracker.count_flush(), 1);
+    assert_eq!(tracker.count_invalidate(), 0);
+
+    // read 不应该 inv
+    dma.read(0);
+    assert_eq!(tracker.count_flush(), 1); // 没有增加
+    assert_eq!(tracker.count_invalidate(), 0); // 没有增加
+}
+
+#[test]
+fn test_direction_from_device() {
+    let tracker = Box::new(TrackingDmaOp::new(0x1000));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+    let mut dma: DArray<u32> = dev.new_array(10, 64, Direction::FromDevice).unwrap();
+
+    tracker.clear();
+
+    // read 应该 inv
+    dma.read(0);
+    assert_eq!(tracker.count_flush(), 0);
+    assert_eq!(tracker.count_invalidate(), 1);
+
+    // set 不应该 flush
+    tracker.clear();
+    dma.set(0, 1);
+    assert_eq!(tracker.count_flush(), 0);
+    assert_eq!(tracker.count_invalidate(), 0);
+}
+
+#[test]
+fn test_direction_bidirectional() {
+    let tracker = Box::new(TrackingDmaOp::new(0x1000));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+    let mut dma: DArray<u32> = dev.new_array(10, 64, Direction::Bidirectional).unwrap();
+
+    tracker.clear();
+
+    // set 应该 flush
+    dma.set(0, 1);
+    assert_eq!(tracker.count_flush(), 1);
+
+    // read 应该 inv
+    dma.read(0);
+    assert_eq!(tracker.count_invalidate(), 1);
+}
+
+// ============================================================================
+// 新增测试: Drop 行为测试
+// ============================================================================
+
+#[test]
+fn test_drop_to_device() {
+    let tracker = Box::new(TrackingDmaOp::new(0x1000));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+
+    // 使用对齐的缓冲区
+    let mut buf = align_alloc::AlignedBuffer::<64>::new();
+    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
+    let size = NonZeroUsize::new(0x1000).unwrap();
+
+    {
+        let _mapping = dev.map_single(addr, size, 64, Direction::ToDevice).unwrap();
+        tracker.clear();
+    } // Drop 被调用
+
+    // ToDevice: 应该 flush,不应该 inv
+    assert_eq!(tracker.count_flush(), 1);
+    assert_eq!(tracker.count_invalidate(), 0);
+}
+
+#[test]
+fn test_drop_from_device() {
+    let tracker = Box::new(TrackingDmaOp::new(0x1000));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+
+    // 使用对齐的缓冲区
+    let mut buf = align_alloc::AlignedBuffer::<64>::new();
+    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
+    let size = NonZeroUsize::new(0x1000).unwrap();
+
+    {
+        let _mapping = dev
+            .map_single(addr, size, 64, Direction::FromDevice)
+            .unwrap();
+        tracker.clear();
+    } // Drop 被调用
+
+    // FromDevice: 不应该 flush,应该 inv
+    assert_eq!(tracker.count_flush(), 0);
+    assert_eq!(tracker.count_invalidate(), 1);
+}
+
+#[test]
+fn test_drop_bidirectional() {
+    let tracker = Box::new(TrackingDmaOp::new(0x1000));
+    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
+    let dev = DeviceDma::new(u64::MAX, tracker);
+
+    // 使用对齐的缓冲区
+    let mut buf = align_alloc::AlignedBuffer::<64>::new();
+    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
+    let size = NonZeroUsize::new(0x1000).unwrap();
+
+    {
+        let _mapping = dev
+            .map_single(addr, size, 64, Direction::Bidirectional)
+            .unwrap();
+        tracker.clear();
+    } // Drop 被调用
+
+    // Bidirectional: 应该先 flush 然后 inv
+    assert_eq!(tracker.count_flush(), 1);
+    assert_eq!(tracker.count_invalidate(), 1);
+
+    // 验证顺序: flush 在 inv 前面
+    let ops = tracker.get_operations();
+    let flush_idx = ops
+        .iter()
+        .position(|op| matches!(op, DmaOperation::Flush { .. }));
+    let inv_idx = ops
+        .iter()
+        .position(|op| matches!(op, DmaOperation::Invalidate { .. }));
+    assert!(flush_idx < inv_idx);
+}
+
+// 简单的对齐缓冲区模块
+mod align_alloc {
+    use std::ptr::NonNull;
+
+    pub struct AlignedBuffer<const ALIGNMENT: usize> {
+        ptr: NonNull<u8>,
+        _size: usize,
+    }
+
+    impl<const ALIGNMENT: usize> AlignedBuffer<ALIGNMENT> {
+        pub fn new() -> Self {
+            // 分配对齐的内存
+            let layout = std::alloc::Layout::from_size_align(0x1000, ALIGNMENT).unwrap();
+            let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+            assert!(!ptr.is_null(), "Failed to allocate aligned buffer");
+
+            Self {
+                ptr: NonNull::new(ptr).unwrap(),
+                _size: 0x1000,
+            }
+        }
+
+        pub fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.ptr.as_ptr()
+        }
+    }
+
+    impl<const ALIGNMENT: usize> Drop for AlignedBuffer<ALIGNMENT> {
+        fn drop(&mut self) {
+            let layout = std::alloc::Layout::from_size_align(0x1000, ALIGNMENT).unwrap();
+            unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
+        }
     }
 }
