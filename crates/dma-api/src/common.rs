@@ -41,7 +41,7 @@ impl<T> DCommon<T> {
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe {
-            core::slice::from_raw_parts_mut(self.handle.origin_virt.as_ptr(), self.handle.size())
+            core::slice::from_raw_parts_mut(self.handle.dma_virt().as_ptr(), self.handle.size())
         }
     }
 
@@ -56,7 +56,8 @@ impl<T> DCommon<T> {
     }
 
     pub fn get_ptr(&self, offset: usize) -> *mut u8 {
-        unsafe { self.handle.as_ptr().add(offset) }
+        let ptr = unsafe { self.handle.dma_virt().add(offset) };
+        ptr.as_ptr()
     }
 
     pub fn confirm_write_all(&self) {
@@ -86,9 +87,10 @@ impl SingleMapping {
         os: &DeviceDma,
         addr: NonNull<u8>,
         size: NonZeroUsize,
+        align: usize,
         direction: Direction,
     ) -> Result<Self, DmaError> {
-        let handle = unsafe { os._map_single(addr, size, direction)? };
+        let handle = unsafe { os._map_single(addr, size, align, direction)? };
         let dma_mask = os.dma_mask();
         if handle.dma_addr > dma_mask {
             unsafe {
@@ -128,9 +130,8 @@ impl SingleMapping {
 
 impl Drop for SingleMapping {
     fn drop(&mut self) {
-        if self.is_empty() {
-            return;
-        }
+        self.confirm_write_all();
+        self.prepare_read_all();
         unsafe {
             self.osal.unmap_single(self.handle);
         }

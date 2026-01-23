@@ -163,9 +163,10 @@ impl DeviceDma {
         &self,
         addr: NonNull<u8>,
         size: NonZeroUsize,
+        align: usize,
         direction: Direction,
     ) -> Result<DmaHandle, DmaError> {
-        let res = unsafe { self.os.map_single(self.mask, addr, size, direction) };
+        let res = unsafe { self.os.map_single(self.mask, addr, size, align, direction) };
         #[cfg(debug_assertions)]
         {
             if let Ok(ref handle) = res {
@@ -175,6 +176,13 @@ impl DeviceDma {
                     handle.dma_addr,
                     size,
                     self.mask
+                );
+
+                assert!(
+                    handle.dma_addr % (align as u64) == 0,
+                    "DMA address not aligned: addr={:#x}, align={:#x}",
+                    handle.dma_addr,
+                    align
                 );
             }
         }
@@ -207,24 +215,9 @@ impl DeviceDma {
         &self,
         addr: NonNull<u8>,
         size: NonZeroUsize,
+        align: usize,
         direction: Direction,
     ) -> Result<common::SingleMapping, DmaError> {
-        common::SingleMapping::new(self, addr, size, direction)
+        common::SingleMapping::new(self, addr, size, align, direction)
     }
-
-    // pub fn map_single_slice<'a, T>(
-    //     &self,
-    //     s: &'a [T],
-    //     direction: Direction,
-    // ) -> Result<DSliceSingle<'a, T>, DmaError> {
-    //     DSliceSingle::new(self, s, direction)
-    // }
-
-    // pub fn map_single_slice_mut<'a, T>(
-    //     &self,
-    //     s: &'a mut [T],
-    //     direction: Direction,
-    // ) -> Result<DSliceSingleMut<'a, T>, DmaError> {
-    //     DSliceSingleMut::new(self, s, direction)
-    // }
 }

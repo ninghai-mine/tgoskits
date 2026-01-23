@@ -24,6 +24,7 @@ pub trait DmaOp: Sync + Send + 'static {
         dma_mask: u64,
         addr: NonNull<u8>,
         size: NonZeroUsize,
+        align: usize,
         direction: Direction,
     ) -> Result<DmaHandle, DmaError>;
 
@@ -65,8 +66,6 @@ pub trait DmaOp: Sync + Send + 'static {
 
             self.invalidate(ptr, size);
 
-            // log::trace!("invalidate addr={ptr:#p}, size={size}");
-
             if let Some(virt) = handle.alloc_virt
                 && virt != handle.origin_virt
             {
@@ -76,7 +75,6 @@ pub trait DmaOp: Sync + Send + 'static {
                         handle.origin_virt.as_ptr().add(offset),
                         size,
                     );
-                    // log::trace!("\ncopy\n  @{src:#p} {src:?} ->\n  @{dst:#p} {dst:?}");
 
                     dst.copy_from_slice(src);
                 }
