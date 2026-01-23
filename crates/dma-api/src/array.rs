@@ -116,6 +116,9 @@ impl<'a, T> Iterator for DArrayIter<'a, T> {
     }
 }
 
+/// 注意：Index 实现返回引用，调用时会自动执行缓存同步。
+/// 但由于返回的是引用，在持有引用期间如果设备继续写入数据，
+/// 可能导致数据不一致。对于 `FromDevice` 方向，建议使用 `read()` 方法。
 impl<T: Copy> Index<usize> for DArray<T> {
     type Output = T;
 
@@ -127,9 +130,6 @@ impl<T: Copy> Index<usize> for DArray<T> {
             self.len()
         );
         unsafe {
-            // let ptr = self.data.handle.origin_virt.cast::<T>().add(index);
-            // self.data.prepare_read(ptr.cast(), size_of::<T>());
-            // &*ptr.as_ptr()
             let offset = index * core::mem::size_of::<T>();
             let ptr = self.data.get_ptr(offset).cast::<T>();
             self.data.prepare_read(offset, size_of::<T>());

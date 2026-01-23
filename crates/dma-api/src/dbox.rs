@@ -4,6 +4,8 @@ pub struct DBox<T> {
     data: DCommon<T>,
 }
 
+unsafe impl<T> Send for DBox<T> where T: Send {}
+
 impl<T> DBox<T> {
     pub(crate) fn new_zero(
         os: &DeviceDma,
@@ -44,7 +46,8 @@ impl<T> DBox<T> {
     ///
     /// # Safety
     ///
-    ///
+    /// - 调用者必须确保在使用该切片期间，设备不会访问此内存区域
+    /// - 调用者必须手动处理缓存同步（flush/invalidate）
     pub unsafe fn as_buff_slice_mut(&mut self) -> &mut [u8] {
         self.data.as_mut_slice()
     }

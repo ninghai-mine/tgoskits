@@ -93,10 +93,10 @@ impl DmaOp for MyDmaImpl {
 
 ### 使用 `DeviceDma` 和 DMA 容器
 
-```rust
+```rust,ignore
 use dma_api::{DeviceDma, Direction};
 
-// 创建 DMA 设备实例
+// 创建 DMA 设备实例 (假设 DMA_IMPL 已实现 DmaOp trait)
 static DMA_IMPL: MyDmaImpl = MyDmaImpl;
 let device = DeviceDma::new(0xFFFFFFFF, &DMA_IMPL);
 
@@ -110,7 +110,7 @@ dma_array.set(1, 0xABCDEF00);
 
 // 读取数据 (自动处理缓存同步)
 let value = dma_array.read(0);
-assert_eq!(value, 0x12345678);
+assert_eq!(value, Some(0x12345678));
 
 // 获取 DMA 地址用于硬件配置
 let dma_addr = dma_array.dma_addr();
@@ -120,6 +120,12 @@ let dma_addr = dma_array.dma_addr();
 let val = dma_array[0]; // 自动处理缓存同步
 
 // 创建 DMA Box (单个值)
+#[derive(Default)]
+struct MyStruct {
+    field1: u32,
+    field2: u32,
+}
+
 let mut dma_box = device.new_box::<MyStruct>(64, Direction::ToDevice)
     .expect("Failed to allocate DMA box");
 
@@ -132,10 +138,11 @@ dma_box.modify(|v| v.field1 += 10);
 
 ### 使用 `SingleMapping` 映射现有缓冲区
 
-```rust
-use dma_api::DeviceDma;
+```rust,ignore
+use dma_api::{DeviceDma, Direction};
 use core::{ptr::NonNull, num::NonZeroUsize};
 
+// 假设 DMA_IMPL 已实现 DmaOp trait
 let device = DeviceDma::new(0xFFFFFFFF, &DMA_IMPL);
 
 // 现有缓冲区
@@ -144,10 +151,8 @@ let addr = NonNull::new(buffer.as_mut_ptr()).unwrap();
 let size = NonZeroUsize::new(4096).unwrap();
 
 // 映射缓冲区用于 DMA
-let mapping = unsafe {
-    device.map_single(addr, size, 64, Direction::ToDevice)
-        .expect("Mapping failed")
-};
+let mapping = device.map_single(addr, size, 64, Direction::ToDevice)
+    .expect("Mapping failed");
 
 // 使用映射的 DMA 地址
 let dma_addr = mapping.dma_addr();

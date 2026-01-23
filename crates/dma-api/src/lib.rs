@@ -67,6 +67,38 @@ pub struct DmaHandle {
     pub alloc_virt: Option<NonNull<u8>>,
 }
 impl DmaHandle {
+    /// 创建一个新的 DmaHandle
+    ///
+    /// # Arguments
+    /// * `origin_virt` - 原始虚拟地址指针
+    /// * `dma_addr` - DMA 地址
+    /// * `layout` - 内存布局
+    pub fn new(origin_virt: NonNull<u8>, dma_addr: DmaAddr, layout: Layout) -> Self {
+        Self {
+            origin_virt,
+            dma_addr,
+            layout,
+            alloc_virt: None,
+        }
+    }
+
+    /// 创建一个带有分配虚拟地址的 DmaHandle
+    ///
+    /// 当 DMA 内存需要额外分配缓冲区时使用
+    pub fn new_with_alloc(
+        origin_virt: NonNull<u8>,
+        dma_addr: DmaAddr,
+        layout: Layout,
+        alloc_virt: NonNull<u8>,
+    ) -> Self {
+        Self {
+            origin_virt,
+            dma_addr,
+            layout,
+            alloc_virt: Some(alloc_virt),
+        }
+    }
+
     pub fn size(&self) -> usize {
         self.layout.size()
     }

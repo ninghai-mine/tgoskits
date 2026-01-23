@@ -1,6 +1,6 @@
 #![cfg(all(test, any(unix, windows)))]
 
-use std::ptr::NonNull;
+use std::{num::NonZeroUsize, ptr::NonNull};
 
 use dma_api::*;
 
@@ -77,20 +77,42 @@ fn test_index() {
 }
 
 fn new_api() -> DeviceDma {
-    DeviceDma::new(Impled)
+    static IMPL: Impled = Impled;
+    DeviceDma::new(u64::MAX, &IMPL)
 }
 
 struct Impled;
 
-impl DeviceDmaOps for Impled {
-    // fn map(&self, addr: std::ptr::NonNull<u8>, size: usize, direction: Direction) -> DmaHandle {
-    //     println!("map @{:?}, size {size:#x}, {direction:?}", addr);
-    //     addr.as_ptr() as usize as _
-    // }
+impl DmaOp for Impled {
+    fn page_size(&self) -> usize {
+        0x1000
+    }
 
-    // fn unmap(&self, addr: std::ptr::NonNull<u8>, size: usize) {
-    //     println!("unmap @{:?}, size {size:#x}", addr);
-    // }
+    unsafe fn map_single(
+        &self,
+        _dma_mask: u64,
+        addr: NonNull<u8>,
+        size: NonZeroUsize,
+        align: usize,
+        _direction: Direction,
+    ) -> Result<DmaHandle, DmaError> {
+        println!(
+            "map_single @{:?}, size {:#x}, align: {:#x}",
+            addr,
+            size.get(),
+            align
+        );
+        let layout = core::alloc::Layout::from_size_align(size.get(), align)?;
+        Ok(DmaHandle::new(addr, addr.as_ptr() as u64, layout))
+    }
+
+    unsafe fn unmap_single(&self, handle: DmaHandle) {
+        println!(
+            "unmap_single @{:?}, size {:#x}",
+            handle.origin_virt,
+            handle.size()
+        );
+    }
 
     fn flush(&self, addr: std::ptr::NonNull<u8>, size: usize) {
         println!("flush @{:?}, size {size:#x}", addr);
@@ -100,11 +122,11 @@ impl DeviceDmaOps for Impled {
         println!("invalidate @{:?}, size {size:#x}", addr);
     }
 
-    fn page_size(&self) -> usize {
-        0x1000
-    }
-
-    unsafe fn alloc_coherent(&self, layout: core::alloc::Layout) -> Option<DmaHandle> {
+    unsafe fn alloc_coherent(
+        &self,
+        _dma_mask: u64,
+        layout: core::alloc::Layout,
+    ) -> Option<DmaHandle> {
         println!(
             "alloc_coherent size: {:#x}, align: {:#x}",
             layout.size(),
@@ -114,15 +136,19 @@ impl DeviceDmaOps for Impled {
         if ptr.is_null() {
             return None;
         }
-        Some(DmaHandle::new(NonNull::new(ptr).unwrap(), ptr as _, layout))
+        Some(DmaHandle::new(
+            NonNull::new(ptr).unwrap(),
+            ptr as u64,
+            layout,
+        ))
     }
 
     unsafe fn dealloc_coherent(&self, handle: DmaHandle) {
         println!(
             "dealloc_coherent size: {:#x}, align: {:#x}",
-            handle.layout.size(),
-            handle.layout.align()
+            handle.size(),
+            handle.align()
         );
-        unsafe { std::alloc::dealloc(handle.dma_addr as usize as _, handle.layout) };
+        unsafe { std::alloc::dealloc(handle.origin_virt.as_ptr(), handle.layout) };
     }
 }

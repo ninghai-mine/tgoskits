@@ -87,6 +87,8 @@ pub struct SingleMapping {
     pub direction: Direction,
 }
 
+unsafe impl Send for SingleMapping {}
+
 impl SingleMapping {
     pub(crate) fn new(
         os: &DeviceDma,
@@ -120,6 +122,11 @@ impl SingleMapping {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// 获取 DMA 地址
+    pub fn dma_addr(&self) -> crate::DmaAddr {
+        self.handle.dma_addr
     }
 
     pub fn prepare_read_all(&self) {
