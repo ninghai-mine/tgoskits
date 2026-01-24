@@ -140,26 +140,26 @@ dma_box.modify(|v| v.field1 += 10);
 
 ```rust,ignore
 use dma_api::{DeviceDma, Direction};
-use core::{ptr::NonNull, num::NonZeroUsize};
 
 // 假设 DMA_IMPL 已实现 DmaOp trait
 let device = DeviceDma::new(0xFFFFFFFF, &DMA_IMPL);
 
 // 现有缓冲区
 let mut buffer = [0u8; 4096];
-let addr = NonNull::new(buffer.as_mut_ptr()).unwrap();
-let size = NonZeroUsize::new(4096).unwrap();
 
 // 映射缓冲区用于 DMA
-let mapping = device.map_single(addr, size, 64, Direction::ToDevice)
+let mapping = device.map_single(&buffer, Direction::ToDevice)
     .expect("Mapping failed");
+
+// 使用前需要手动同步缓存
+mapping.prepare_read_all();   // 如果需要从设备读取
+// ... DMA 传输 ...
+mapping.confirm_write_all();  // 如果需要写入设备
 
 // 使用映射的 DMA 地址
 let dma_addr = mapping.dma_addr();
 
-// ... DMA 传输 ...
-
-// 映射在离开作用域时自动解除
+// 映射在离开作用域时自动解除（不会自动同步缓存）
 ```
 
 ## 缓存同步
@@ -183,6 +183,26 @@ API 遵循 Linux DMA 缓存一致性语义，由 `DmaOp` trait 的 `prepare_read
 - `read()` / `set()` - 自动同步对应元素
 - `write()` / `modify()` - 自动同步写入
 - `copy_from_slice()` - 写入后自动同步整个范围
+
+### SingleMap 的手动同步
+
+**重要**：`SingleMap` **不会**在 Drop 时自动同步缓存，用户必须显式调用缓存同步方法：
+
+```rust,ignore
+let mapping = device.map_single(&buffer, Direction::ToDevice)?;
+
+// 写入前准备
+mapping.confirm_write_all();  // 将 CPU 数据刷到内存
+
+// ... DMA 传输 ...
+
+// 读取前准备
+mapping.prepare_read_all();   // 使 CPU 缓存失效
+
+// Drop 时只会解除映射，不会自动同步
+```
+
+这与 Linux DMA API 的行为一致，让用户可以精确控制缓存同步的时机。
 
 ## API 参考
 

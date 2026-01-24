@@ -82,4 +82,8 @@ pub enum DmaError {
     DmaMaskNotMatch { addr: DmaAddr, mask: u64 },
     #[error("DMA align mismatch: required={required:#X}, but address={address}")]
     AlignMismatch { required: usize, address: DmaAddr },
+    #[error("Null pointer provided for DMA mapping")]
+    NullPointer,
+    #[error("Zero-sized buffer cannot be used for DMA")]
+    ZeroSizedBuffer,
 }

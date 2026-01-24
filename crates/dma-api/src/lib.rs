@@ -394,13 +394,11 @@ impl DeviceDma {
         dbox::DBox::new_zero_with_align(self, align, direction)
     }
 
-    pub fn map_single(
+    pub fn map_single<T>(
         &self,
-        addr: NonNull<u8>,
-        size: NonZeroUsize,
-        align: usize,
+        buff: &[T],
         direction: DmaDirection,
     ) -> Result<common::SingleMap, DmaError> {
-        common::SingleMap::new(self, addr, size, align, direction)
+        common::SingleMap::new_from_slice(self, buff, direction)
     }
 }

@@ -97,10 +97,8 @@ fn mask_check_rejects_overflow_map() {
     let dev = DeviceDma::new(0x0fff, &DMA);
 
     let mut buf = [0u8; 0x1000];
-    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
-    let size = NonZeroUsize::new(0x1000).unwrap();
 
-    let err = dev.map_single(addr, size, 64, DmaDirection::FromDevice);
+    let err = dev.map_single(&buf, DmaDirection::FromDevice);
 
     assert!(matches!(err, Err(DmaError::DmaMaskNotMatch { .. })));
 }
@@ -407,85 +405,6 @@ fn test_direction_bidirectional() {
 // ============================================================================
 // 新增测试: Drop 行为测试
 // ============================================================================
-
-#[test]
-fn test_drop_to_device() {
-    let tracker = Box::new(TrackingDmaOp::new(0x1000));
-    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
-    let dev = DeviceDma::new(u64::MAX, tracker);
-
-    // 使用对齐的缓冲区
-    let mut buf = align_alloc::AlignedBuffer::<64>::new();
-    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
-    let size = NonZeroUsize::new(0x1000).unwrap();
-
-    {
-        let _mapping = dev
-            .map_single(addr, size, 64, DmaDirection::ToDevice)
-            .unwrap();
-        tracker.clear();
-    } // Drop 被调用
-
-    // ToDevice: 应该 flush,不应该 inv
-    assert_eq!(tracker.count_flush(), 1);
-    assert_eq!(tracker.count_invalidate(), 0);
-}
-
-#[test]
-fn test_drop_from_device() {
-    let tracker = Box::new(TrackingDmaOp::new(0x1000));
-    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
-    let dev = DeviceDma::new(u64::MAX, tracker);
-
-    // 使用对齐的缓冲区
-    let mut buf = align_alloc::AlignedBuffer::<64>::new();
-    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
-    let size = NonZeroUsize::new(0x1000).unwrap();
-
-    {
-        let _mapping = dev
-            .map_single(addr, size, 64, DmaDirection::FromDevice)
-            .unwrap();
-        tracker.clear();
-    } // Drop 被调用
-
-    // FromDevice: 不应该 flush,应该 inv
-    assert_eq!(tracker.count_flush(), 0);
-    assert_eq!(tracker.count_invalidate(), 1);
-}
-
-#[test]
-fn test_drop_bidirectional() {
-    let tracker = Box::new(TrackingDmaOp::new(0x1000));
-    let tracker: &'static TrackingDmaOp = Box::leak(tracker);
-    let dev = DeviceDma::new(u64::MAX, tracker);
-
-    // 使用对齐的缓冲区
-    let mut buf = align_alloc::AlignedBuffer::<64>::new();
-    let addr = NonNull::new(buf.as_mut_ptr()).unwrap();
-    let size = NonZeroUsize::new(0x1000).unwrap();
-
-    {
-        let _mapping = dev
-            .map_single(addr, size, 64, DmaDirection::Bidirectional)
-            .unwrap();
-        tracker.clear();
-    } // Drop 被调用
-
-    // Bidirectional: 应该先 flush 然后 inv
-    assert_eq!(tracker.count_flush(), 1);
-    assert_eq!(tracker.count_invalidate(), 1);
-
-    // 验证顺序: flush 在 inv 前面
-    let ops = tracker.get_operations();
-    let flush_idx = ops
-        .iter()
-        .position(|op| matches!(op, DmaOperation::Flush { .. }));
-    let inv_idx = ops
-        .iter()
-        .position(|op| matches!(op, DmaOperation::Invalidate { .. }));
-    assert!(flush_idx < inv_idx);
-}
 
 // 简单的对齐缓冲区模块
 mod align_alloc {
