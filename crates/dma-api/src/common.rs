@@ -1,57 +1,32 @@
 use core::{alloc::Layout, num::NonZeroUsize, ptr::NonNull};
 
-use crate::{DeviceDma, DmaDirection, DmaError, DmaHandle, osal::arch::flush};
+use crate::{DeviceDma, DmaDirection, DmaError, DmaHandle};
 
-pub struct DCommon<T> {
+pub(crate) struct DCommon {
     pub handle: DmaHandle,
     pub osal: DeviceDma,
     pub direction: DmaDirection,
-    _phantom: core::marker::PhantomData<T>,
 }
 
-unsafe impl<T: Send> Send for DCommon<T> {}
+unsafe impl Send for DCommon {}
 
-impl<T> DCommon<T> {
-    pub fn new(
+impl DCommon {
+    pub fn new_zero(
         os: &DeviceDma,
-        size: usize,
-        align: usize,
+        layout: Layout,
         direction: DmaDirection,
     ) -> Result<Self, DmaError> {
-        let layout = Layout::from_size_align(size, align)?;
-        let handle = unsafe { os.alloc_coherent(layout) }.ok_or(DmaError::NoMemory)?;
-        let dma_mask = os.dma_mask();
-
-        let in_mask = if layout.size() == 0 {
-            handle.dma_addr <= dma_mask
-        } else {
-            handle
-                .dma_addr
-                .checked_add(layout.size().saturating_sub(1) as u64)
-                .map(|end| end <= dma_mask)
-                .unwrap_or(false)
-        };
-
-        if !in_mask {
-            unsafe {
-                os.dealloc_coherent(handle);
-            }
-            return Err(DmaError::DmaMaskNotMatch {
-                addr: handle.dma_addr,
-                mask: dma_mask,
-            });
-        }
-
+        let handle = unsafe { os.alloc_coherent(layout) }?;
+        let ptr = handle.dma_virt();
         unsafe {
-            core::ptr::write_bytes(handle.dma_virt().as_ptr(), 0, size);
+            ptr.write_bytes(0, handle.size());
         }
-        flush(handle.dma_virt(), size);
+        os.flush_invalidate(ptr, handle.size());
 
         Ok(Self {
             handle,
             osal: os.clone(),
             direction,
-            _phantom: core::marker::PhantomData,
         })
     }
 
@@ -71,7 +46,7 @@ impl<T> DCommon<T> {
             .confirm_write(&self.handle, offset, size, self.direction);
     }
 
-    pub fn get_ptr(&self, offset: usize) -> *mut u8 {
+    pub fn dma_ptr(&self, offset: usize) -> *mut u8 {
         let ptr = unsafe { self.handle.dma_virt().add(offset) };
         ptr.as_ptr()
     }
@@ -82,7 +57,7 @@ impl<T> DCommon<T> {
     }
 }
 
-impl<T> Drop for DCommon<T> {
+impl Drop for DCommon {
     fn drop(&mut self) {
         if self.handle.size() > 0 {
             unsafe {

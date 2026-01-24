@@ -1,36 +1,56 @@
-use crate::{DeviceDma, DmaDirection, DmaError, common::DCommon};
+use crate::{DeviceDma, DmaAddr, DmaDirection, DmaError, common::DCommon};
 
 pub struct DBox<T> {
-    data: DCommon<T>,
+    data: DCommon,
+    _marker: core::marker::PhantomData<T>,
 }
 
 unsafe impl<T> Send for DBox<T> where T: Send {}
 
 impl<T> DBox<T> {
-    pub(crate) fn new_zero(
+    pub(crate) fn new_zero(os: &DeviceDma, direction: DmaDirection) -> Result<Self, DmaError> {
+        let layout = core::alloc::Layout::from_size_align(
+            core::mem::size_of::<T>(),
+            core::mem::align_of::<T>(),
+        )?;
+        let data = DCommon::new_zero(os, layout, direction)?;
+        Ok(Self {
+            data,
+            _marker: core::marker::PhantomData,
+        })
+    }
+
+    pub(crate) fn new_zero_with_align(
         os: &DeviceDma,
         align: usize,
         direction: DmaDirection,
     ) -> Result<Self, DmaError> {
-        let data = DCommon::new(os, core::mem::size_of::<T>(), align, direction)?;
-        Ok(Self { data })
+        let layout = core::alloc::Layout::from_size_align(
+            core::mem::size_of::<T>(),
+            align.max(core::mem::align_of::<T>()),
+        )?;
+        let data = DCommon::new_zero(os, layout, direction)?;
+        Ok(Self {
+            data,
+            _marker: core::marker::PhantomData,
+        })
     }
 
-    pub fn dma_addr(&self) -> crate::DmaAddr {
+    pub fn dma_addr(&self) -> DmaAddr {
         self.data.handle.dma_addr
     }
 
     pub fn read(&self) -> T {
         unsafe {
             self.data.prepare_read(0, core::mem::size_of::<T>());
-            let ptr = self.data.get_ptr(0).cast::<T>();
+            let ptr = self.data.dma_ptr(0).cast::<T>();
             ptr.read_volatile()
         }
     }
 
     pub fn write(&mut self, value: T) {
         unsafe {
-            let ptr = self.data.get_ptr(0).cast::<T>();
+            let ptr = self.data.dma_ptr(0).cast::<T>();
             ptr.write_volatile(value);
             self.data.confirm_write(0, core::mem::size_of::<T>());
         }

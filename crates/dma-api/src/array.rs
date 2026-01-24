@@ -1,22 +1,35 @@
-use core::ops::Index;
+use core::{alloc::Layout, ops::Index};
 
 use crate::{DeviceDma, DmaDirection, DmaError, common::DCommon};
 
 pub struct DArray<T> {
-    data: DCommon<T>,
+    data: DCommon,
+    _phantom: core::marker::PhantomData<T>,
 }
 
 unsafe impl<T> Send for DArray<T> where T: Send {}
 
 impl<T> DArray<T> {
+    pub(crate) fn new_zero_with_align(
+        os: &DeviceDma,
+        size: usize,
+        algin: usize,
+        direction: DmaDirection,
+    ) -> Result<Self, DmaError> {
+        let layout = Layout::from_size_align(size, algin.max(core::mem::align_of::<T>()))?;
+        let data = DCommon::new_zero(os, layout, direction)?;
+        Ok(Self {
+            data,
+            _phantom: core::marker::PhantomData,
+        })
+    }
+
     pub(crate) fn new_zero(
         os: &DeviceDma,
         size: usize,
-        align: usize,
         direction: DmaDirection,
     ) -> Result<Self, DmaError> {
-        let data = DCommon::new(os, size * core::mem::size_of::<T>(), align, direction)?;
-        Ok(Self { data })
+        Self::new_zero_with_align(os, size, core::mem::align_of::<T>(), direction)
     }
 
     pub fn dma_addr(&self) -> crate::DmaAddr {
@@ -39,7 +52,7 @@ impl<T> DArray<T> {
         unsafe {
             let offset = index * core::mem::size_of::<T>();
             self.data.prepare_read(offset, size_of::<T>());
-            Some(self.data.get_ptr(offset).cast::<T>().read_volatile())
+            Some(self.data.dma_ptr(offset).cast::<T>().read_volatile())
         }
     }
 
@@ -53,7 +66,7 @@ impl<T> DArray<T> {
 
         unsafe {
             let offset = index * size_of::<T>();
-            let ptr = self.data.get_ptr(offset).cast::<T>();
+            let ptr = self.data.dma_ptr(offset).cast::<T>();
             ptr.write_volatile(value);
             self.data.confirm_write(offset, size_of::<T>());
         }
@@ -131,7 +144,7 @@ impl<T: Copy> Index<usize> for DArray<T> {
         );
         unsafe {
             let offset = index * core::mem::size_of::<T>();
-            let ptr = self.data.get_ptr(offset).cast::<T>();
+            let ptr = self.data.dma_ptr(offset).cast::<T>();
             self.data.prepare_read(offset, size_of::<T>());
             &*ptr
         }

@@ -9,3 +9,7 @@ pub fn flush(addr: NonNull<u8>, size: usize) {
 pub fn invalidate(addr: NonNull<u8>, size: usize) {
     dcache_range(CacheOp::Invalidate, addr.as_ptr() as _, size);
 }
+
+pub fn flush_invalidate(addr: NonNull<u8>, size: usize) {
+    dcache_range(CacheOp::CleanAndInvalidate, addr.as_ptr() as _, size);
+}

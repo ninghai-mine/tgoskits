@@ -271,6 +271,10 @@ impl DeviceDma {
         self.os.invalidate(addr, size)
     }
 
+    pub fn flush_invalidate(&self, addr: NonNull<u8>, size: usize) {
+        self.os.flush_invalidate(addr, size)
+    }
+
     pub fn page_size(&self) -> usize {
         self.os.page_size()
     }
@@ -295,12 +299,35 @@ impl DeviceDma {
         self.os.confirm_write(handle, offset, size, direction)
     }
 
-    unsafe fn alloc_coherent(&self, layout: core::alloc::Layout) -> Option<DmaHandle> {
-        unsafe { self.os.alloc_coherent(self.mask, layout) }
+    unsafe fn alloc_coherent(&self, layout: core::alloc::Layout) -> Result<DmaHandle, DmaError> {
+        let res = unsafe { self.os.alloc_coherent(self.mask, layout) }.ok_or(DmaError::NoMemory)?;
+        self.check_handle(&res)?;
+        Ok(res)
     }
 
     unsafe fn dealloc_coherent(&self, handle: DmaHandle) {
         unsafe { self.os.dealloc_coherent(handle) }
+    }
+
+    fn check_handle(&self, handle: &DmaHandle) -> Result<(), DmaError> {
+        let addr: u64 = handle.dma_addr.into();
+
+        let in_mask = if handle.size() == 0 {
+            addr <= self.dma_mask()
+        } else {
+            addr.checked_add(handle.size().saturating_sub(1) as u64)
+                .map(|end| end <= self.dma_mask())
+                .unwrap_or(false)
+        };
+
+        if !in_mask {
+            return Err(DmaError::DmaMaskNotMatch {
+                addr: handle.dma_addr,
+                mask: self.dma_mask(),
+            });
+        }
+
+        Ok(())
     }
 
     unsafe fn _map_single(
@@ -311,34 +338,7 @@ impl DeviceDma {
         direction: DmaDirection,
     ) -> Result<DmaHandle, DmaError> {
         let res = unsafe { self.os.map_single(self.mask, addr, size, align, direction) }?;
-        let addr: u64 = res.dma_addr.into();
-
-        let in_mask = addr
-            .checked_add(res.size().saturating_sub(1) as u64)
-            .map(|end| end <= self.dma_mask())
-            .unwrap_or(false);
-
-        if !in_mask {
-            unsafe {
-                self.os.unmap_single(res);
-            }
-            return Err(DmaError::DmaMaskNotMatch {
-                addr: res.dma_addr,
-                mask: self.dma_mask(),
-            });
-        }
-
-        let is_aligned = (res.dma_virt().as_ptr() as usize).is_multiple_of(align);
-        if !is_aligned {
-            unsafe {
-                self.os.unmap_single(res);
-            }
-            return Err(DmaError::AlignMismatch {
-                required: align,
-                address: res.dma_virt().as_ptr() as usize,
-            });
-        }
-
+        self.check_handle(&res)?;
         Ok(res)
     }
 
@@ -346,21 +346,33 @@ impl DeviceDma {
         unsafe { self.os.unmap_single(handle) }
     }
 
-    pub fn new_array<T>(
+    pub fn array_zero<T>(
+        &self,
+        size: usize,
+        direction: DmaDirection,
+    ) -> Result<array::DArray<T>, DmaError> {
+        array::DArray::new_zero(self, size, direction)
+    }
+
+    pub fn array_zero_with_align<T>(
         &self,
         size: usize,
         align: usize,
         direction: DmaDirection,
     ) -> Result<array::DArray<T>, DmaError> {
-        array::DArray::new_zero(self, size, align, direction)
+        array::DArray::new_zero_with_align(self, size, align, direction)
     }
 
-    pub fn new_box<T>(
+    pub fn box_zero<T>(&self, direction: DmaDirection) -> Result<dbox::DBox<T>, DmaError> {
+        dbox::DBox::new_zero(self, direction)
+    }
+
+    pub fn box_zero_with_align<T>(
         &self,
         align: usize,
         direction: DmaDirection,
     ) -> Result<dbox::DBox<T>, DmaError> {
-        dbox::DBox::new_zero(self, align, direction)
+        dbox::DBox::new_zero_with_align(self, align, direction)
     }
 
     pub fn map_single(

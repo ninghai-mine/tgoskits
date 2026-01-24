@@ -1,5 +1,7 @@
 use core::{num::NonZeroUsize, ptr::NonNull};
 
+use mbarrier::mb;
+
 use crate::{DmaDirection, DmaError, DmaHandle};
 
 cfg_if::cfg_if! {
@@ -36,12 +38,20 @@ pub trait DmaOp: Sync + Send + 'static {
 
     /// 写回缓存到内存 (clean)
     fn flush(&self, addr: NonNull<u8>, size: usize) {
+        mb();
         arch::flush(addr, size)
     }
 
     /// 使缓存无效 (invalidate)
     fn invalidate(&self, addr: NonNull<u8>, size: usize) {
-        arch::invalidate(addr, size)
+        arch::invalidate(addr, size);
+        mb();
+    }
+
+    fn flush_invalidate(&self, addr: NonNull<u8>, size: usize) {
+        mb();
+        arch::flush_invalidate(addr, size);
+        mb();
     }
 
     /// 分配 DMA 可访问内存
