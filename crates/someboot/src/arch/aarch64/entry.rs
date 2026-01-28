@@ -38,6 +38,7 @@ pub unsafe extern "C" fn kernel_entry(_fdt_addr: usize) {
 
 pub fn el_entry() -> ! {
     super::relocate::apply();
+
     let kernel_code_start_lma = ext_sym_addr!(_head);
     let kernel_code_end_lma = ext_sym_addr!(__kernel_code_end);
     crate::mem::set_kernel_range(kernel_code_start_lma, kernel_code_end_lma);
@@ -49,6 +50,7 @@ pub fn el_entry() -> ! {
     if let Some(cmdline) = crate::cmdline::cmdline() {
         println!("{cmdline}");
     }
+
     println!("EL: {}", CurrentEL.read(CurrentEL::EL));
     println!("VM Load Offset: {:#x}", crate::mem::vm_load_offset());
 

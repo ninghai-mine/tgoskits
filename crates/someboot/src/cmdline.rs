@@ -1,15 +1,18 @@
-#[unsafe(link_section = ".data")]
-static CMDLINE: [u8; 4096] = [0; 4096];
+use kernutil::StaticCell;
+
+static CMDLINE: StaticCell<[u8; 0x1000]> = StaticCell::new([0; 0x1000]);
 
 const BUILDIN_CMDLINE: Option<&str> = option_env!("KERNEL_BUILTIN_CMDLINE");
 
 pub fn set_cmdline(cmdline: &str) {
     let bytes = cmdline.as_bytes();
     let len = bytes.len().min(CMDLINE.len() - 1);
+
     unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), CMDLINE.as_ptr() as *mut u8, len);
-        // Null-terminate
-        (CMDLINE.as_ptr() as *mut u8).add(len).write(0);
+        CMDLINE.update(|cmd| {
+            cmd[..len].copy_from_slice(&bytes[..len]);
+            cmd[len] = 0;
+        });
     }
 }
 
@@ -17,6 +20,7 @@ pub fn cmdline() -> Option<&'static str> {
     if CMDLINE[0] == 0 {
         return BUILDIN_CMDLINE;
     }
+
     let len = CMDLINE
         .iter()
         .position(|&c| c == 0)
@@ -26,6 +30,7 @@ pub fn cmdline() -> Option<&'static str> {
 
 pub fn var(key: &str) -> Option<&'static str> {
     let cmdline = cmdline()?;
+
     for pair in cmdline.split_whitespace() {
         if let Some(pos) = pair.find('=') {
             let (k, v) = pair.split_at(pos);
@@ -108,6 +113,7 @@ fn parse_earlycon_argument(val: &'static str) -> Option<EarlyconConfig> {
 
 pub fn earlycon() -> Option<EarlyconConfig> {
     let val = crate::cmdline::var("earlycon")?;
+
     let config = parse_earlycon_argument(val)?;
     Some(config)
 }
