@@ -117,11 +117,12 @@ pub fn sys_mknodat(dirfd: i32, path: *const c_char, mode: u32, dev: u64) -> Resu
     perm &= !current().as_thread().proc_data.umask();
 
     let node_type = match ftype {
-        S_IFREG => NodeType::RegularFile,
+        0 | S_IFREG => NodeType::RegularFile,
         S_IFCHR => NodeType::CharacterDevice,
         S_IFBLK => NodeType::BlockDevice,
         S_IFIFO => NodeType::Fifo,
         S_IFSOCK => NodeType::Socket,
+        S_IFDIR => return Err(AxError::OperationNotPermitted),
         _ => return Err(AxError::InvalidInput),
     };
 
