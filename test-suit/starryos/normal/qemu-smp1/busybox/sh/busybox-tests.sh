@@ -858,7 +858,7 @@ if [ "$_rc" -ne 0 ] && echo "$_t" | grep -qiE "No such device|ENXIO"; then echo 
 
 # blockdev — get sector size of block device
 _t=$({ timeout 10 sh -c "busybox blockdev --getss /dev/loop0 2>&1"; } 2>&1)
-_rc=$?; if [ "$_rc" -eq 0 ] && echo "$_t" | grep -q "[0-9]"; then echo "PASS: blockdev"; PASS=$((PASS+1)); else echo "FAIL: blockdev"; FAIL=$((FAIL+1)); fi
+_rc=$?; if [ "$_rc" -eq 0 ] && echo "$_t" | grep -q "[0-9]"; then echo "PASS: blockdev"; PASS=$((PASS+1)); else echo "FAIL: blockdev"; echo "$_t (rc=$_rc)"; FAIL=$((FAIL+1)); fi
 
 echo "=== BusyBox Test Summary ==="
 echo "PASS: $PASS  FAIL: $FAIL  TOTAL: $((PASS+FAIL))"
