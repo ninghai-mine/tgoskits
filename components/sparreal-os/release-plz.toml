@@ -1,0 +1,9 @@
+# Release-plz configuration for Sparreal OS
+# Reference: https://release-plz.dev/docs/config
+
+# Driver directory crates - do not publish or release
+
+[[package]]
+name = "ramdisk"
+publish = false
+release = false

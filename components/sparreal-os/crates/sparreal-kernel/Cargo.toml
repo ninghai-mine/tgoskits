@@ -1,0 +1,32 @@
+[package]
+authors = ["周睿 <zrufo747@outlook.com>"]
+categories = ["embedded", "no-std"]
+description = "Sparreal OS kernel"
+edition.workspace = true
+keywords = ["os"]
+license = "MPL-2.0"
+name = "sparreal-kernel"
+repository.workspace = true
+version = "0.15.3"
+
+[dependencies]
+ansi_rgb = "0.2"
+buddy_system_allocator = "0.11"
+byte-unit = { workspace = true }
+heapless.workspace = true
+log = { workspace = true }
+mmio-api = { workspace = true }
+rgb = "0.8"
+spin = "0.10"
+thiserror.workspace = true
+trait-ffi = "0.2"
+bitflags = "2"
+page-table-generic = { workspace = true }
+num-align = "0.1"
+fdt-raw.workspace = true
+anstyle = { version = "1.0.13", default-features = false }
+
+dma-api = { workspace = true }
+kernutil = { workspace = true }
+sparreal-macros = { workspace = true }
+rdrive = { workspace = true }

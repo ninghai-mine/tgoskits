@@ -1,0 +1,22 @@
+[package]
+authors = ["周睿 <zrufo747@outlook.com>"]
+categories = ["embedded", "no-std"]
+description = "macros for sparreal"
+edition.workspace = true
+license = "MIT"
+name = "sparreal-macros"
+repository.workspace = true
+version = "0.10.1"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+abi-singleton = "0.3"
+darling = "0.21"
+proc-macro2 = "1.0"
+quote = "1.0"
+rdrive-macro-utils = "0.3"
+syn = {version = "2.0", features = ["extra-traits", "full"]}
+
+[features]

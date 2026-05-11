@@ -1,0 +1,17 @@
+args = [
+  "-nographic",
+  "-d",
+  "int,mmu,guest_errors",
+  "-D",
+  "qemu.log",
+]
+fail_regex = [
+  "Panicked:",
+  "!!!! Can't find image information. !!!!",
+  "failed:"
+]
+success_regex = [
+  "All tests passed!",
+]
+to_bin = true
+uefi = true

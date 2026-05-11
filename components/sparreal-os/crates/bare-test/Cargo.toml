@@ -1,0 +1,26 @@
+[package]
+authors = ["Zhourui <zrufo747@outlook.com>"]
+categories = ["development-tools", "development-tools::testing"]
+description = "A test framework for bare metal."
+keywords = ["test", "case", "testing", "testcase", "unittest"]
+license = "MPL-2.0"
+name = "bare-test"
+edition.workspace = true
+repository.workspace = true
+version = "0.8.3"
+
+[features]
+default = []
+net = ["dep:rd-net", "dep:smoltcp"]
+
+[dependencies]
+bare-test-macros.workspace = true
+log.workspace = true
+rd-net = { workspace = true, optional = true }
+smoltcp = { version = "0.12", default-features = false, features = [
+    "alloc",
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-icmp",
+], optional = true }
+sparreal-rt.workspace = true

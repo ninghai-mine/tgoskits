@@ -1,0 +1,19 @@
+[package]
+edition.workspace = true
+name = "simple_bare_test"
+publish = false
+version = "0.1.0"
+
+[dependencies]
+dma-api = {workspace = true}
+
+[dev-dependencies]
+bare-test = {workspace = true}
+log = {workspace = true}
+
+[build-dependencies]
+bare-test-macros = {workspace = true}
+
+[[test]]
+harness = false
+name = "test1"

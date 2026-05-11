@@ -1,0 +1,48 @@
+name: Test for BOARD
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  test-board:
+    name: "Test board: ${{ matrix.board }} - ${{ matrix.suit_name }}"
+    strategy:
+      matrix:
+        include:
+          - board: PhytiumPi
+            suit_name: el1
+            config: "./test-suit/timer/aarch64.toml"
+          - board: PhytiumPi
+            suit_name: smp
+            config: "./test-suit/smp/aarch64.toml"
+          - board: ROC-RK3568-PC
+            suit_name: el1
+            config: "./test-suit/timer/aarch64.toml"
+          - board: ROC-RK3568-PC
+            suit_name: smp
+            config: "./test-suit/smp/aarch64.toml"
+
+      fail-fast: false
+    runs-on:
+      - self-hosted
+      - linux
+      - board
+
+    steps:
+      - name: Clean up workspace
+        run: |
+          [ -d .git ] && git submodule deinit -f . || true
+          [ -d .git/modules ] && rm -rf .git/modules || true
+          [ -d .git ] && git clean -ffdx || true
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          clean: true
+
+      - name: Install dependencies
+        run: cargo +stable install ostool --version ^0.12
+
+      - name: Run tests
+        run: |
+          export RUST_LOG=debug
+          ostool board run -c ${{ matrix.config }} --board-config .github/workflows/board.toml -b ${{ matrix.board }}

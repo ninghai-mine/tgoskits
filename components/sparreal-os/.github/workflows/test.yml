@@ -1,0 +1,61 @@
+name: Check, Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: loongarch64
+            target: loongarch64-unknown-none-softfloat
+          - arch: aarch64
+            target: aarch64-unknown-none-softfloat
+          - arch: riscv64
+            target: riscv64gc-unknown-none-elf
+          - arch: x86_64
+            target: x86_64-unknown-none
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository }}-container:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check rust version
+        run: rustc --version --verbose
+
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: test
+          key: ${{ matrix.target }}
+          cache-targets: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check code format
+        run: cargo fmt --all -- --check
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: Clippy for workspace
+        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
+
+      - name: Build test
+        run: ./scripts/test_${{ matrix.arch }}.sh
+
+      - name: Test rdrive
+        run: cargo test -p rdrive
