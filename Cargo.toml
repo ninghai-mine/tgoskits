@@ -142,6 +142,16 @@ members = [
     "drivers/serial/some-serial",
     "drivers/soc/rockchip/rockchip-pm",
     "drivers/soc/rockchip/rockchip-soc",
+    "drivers/usb/test_crates/test_hub",
+    "drivers/usb/test_crates/test_libusb",
+    "drivers/usb/test_crates/test_libusb_uvc",
+    "drivers/usb/test_crates/test_xhci_uvc",
+    "drivers/usb/usb-device/hid/keyboard",
+    "drivers/usb/usb-device/uvc",
+    "drivers/usb/usb-host",
+    "drivers/usb/usb-if",
+    "drivers/usb/utils/ktest-helper",
+    "drivers/usb/utils/uvc-frame-parser",
     "os/StarryOS/kernel",
     "os/StarryOS/starryos",
     "os/arceos/api/arceos_api",
@@ -380,6 +390,10 @@ rdrive-macros = { version = "0.4", path = "drivers/rdrive-macros" }
 rsext4 = { version = "0.3.7", path = "components/rsext4" }
 scope-local = { version = "0.3.6", path = "components/scope-local" }
 simple-sdmmc = { version = "0.1.1", path = "drivers/blk/simple-sdmmc" }
+crab-usb = { version = "0.9", path = "drivers/usb/usb-host" }
+crab-uvc = { version = "0.1", path = "drivers/usb/usb-device/uvc" }
+ktest-helper = { version = "0.1", path = "drivers/usb/utils/ktest-helper" }
+usb-if = { version = "0.7", path = "drivers/usb/usb-if" }
 smoltcp = { version = "0.13.1", default-features = false }
 smoltcp-fuzz = { version = "0.2.2", path = "components/starry-smoltcp/fuzz" }
 smp-kernel = { version = "0.3.1", path = "components/axplat_crates/examples/smp-kernel" }
@@ -415,6 +429,7 @@ chrono = { version = "0.4", default-features = false }
 enum_dispatch = "0.3"
 env_logger = "0.11"
 event-listener = { version = "5.4.0", default-features = false }
+futures = { version = "0.3", default-features = false }
 heapless = "0.9"
 schemars = "1.2.1"
 toml = "1"
@@ -430,4 +445,5 @@ fdt-edit = "0.2.3"
 fdt-raw = "0.3"
 thiserror = { version = "2", default-features = false }
 tock-registers = "0.10"
+bare-test = { version = "0.7" }
 x86 = "0.52"
