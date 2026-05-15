@@ -1,12 +1,10 @@
 //! Special devices
 
-#[cfg(all(feature = "rknpu", not(any(windows, unix))))]
 mod card0;
 #[cfg(all(feature = "rknpu", not(any(windows, unix))))]
 mod card1;
 #[cfg(all(feature = "rknpu", not(any(windows, unix))))]
 mod dma_heap;
-#[cfg(all(feature = "rknpu", not(any(windows, unix))))]
 mod drm;
 #[cfg(feature = "input")]
 pub mod event;
@@ -20,6 +18,10 @@ pub use r#loop::LoopDevice;
 pub mod ion;
 #[cfg(feature = "memtrack")]
 mod memtrack;
+#[cfg(all(feature = "rknpu", not(any(windows, unix))))]
+mod rknpu_card;
+#[cfg(all(feature = "rknpu", not(any(windows, unix))))]
+mod rknpu_drm;
 #[cfg(feature = "sg2002")]
 pub mod tpu;
 pub mod tty;
@@ -292,9 +294,33 @@ fn builder(fs: Arc<SimpleFs>) -> DirMaker {
         root.add("bus", SimpleDir::new_maker(fs.clone(), Arc::new(bus_dir)));
     }
 
+    // /dev/dri/card0 — simpledrm-class DRM character device. Advertised
+    // unconditionally so libdrm/libudev see the DRM node even before
+    // there's a display device behind it.
+    let dri_card0 = card0::Card0::new();
+    let mut dri_dir = DirMapping::new();
+    dri_dir.add(
+        "card0",
+        Device::new(
+            fs.clone(),
+            NodeType::CharacterDevice,
+            DeviceId::new(226, 0),
+            dri_card0.clone(),
+        ),
+    );
+    dri_dir.add(
+        "renderD128",
+        Device::new(
+            fs.clone(),
+            NodeType::CharacterDevice,
+            DeviceId::new(226, 128),
+            dri_card0,
+        ),
+    );
+
     #[cfg(all(feature = "rknpu", not(any(windows, unix))))]
     {
-        // DMA heap devices
+        // DMA heap devices (rknpu only)
         let mut dma_heap_dir = DirMapping::new();
         dma_heap_dir.add(
             "system",
@@ -310,17 +336,7 @@ fn builder(fs: Arc<SimpleFs>) -> DirMaker {
             SimpleDir::new_maker(fs.clone(), Arc::new(dma_heap_dir)),
         );
 
-        // DRI devices
-        let mut dri_dir = DirMapping::new();
-        dri_dir.add(
-            "card0",
-            Device::new(
-                fs.clone(),
-                NodeType::CharacterDevice,
-                card0::CARD0_SYSTEM_DEVICE_ID,
-                Arc::new(card0::Card0::new()),
-            ),
-        );
+        // RockChip-specific NPU companion card (DRM card1).
         dri_dir.add(
             "card1",
             Device::new(
@@ -330,8 +346,8 @@ fn builder(fs: Arc<SimpleFs>) -> DirMaker {
                 Arc::new(card1::Card1::new()),
             ),
         );
-        root.add("dri", SimpleDir::new_maker(fs.clone(), Arc::new(dri_dir)));
     }
+    root.add("dri", SimpleDir::new_maker(fs.clone(), Arc::new(dri_dir)));
 
     // Loop devices (major 7, minor = device index)
     for i in 0..16 {
