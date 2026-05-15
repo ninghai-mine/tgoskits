@@ -7133,6 +7133,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sg2002-tpu"
+version = "0.1.0"
+dependencies = [
+ "ax-dma",
+ "ax-errno",
+ "ax-memory-addr",
+ "log",
+ "spin 0.10.0",
+]
+
+[[package]]
 name = "sg200x-bsp"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7520,6 +7531,7 @@ dependencies = [
  "ax-alloc",
  "ax-config",
  "ax-display",
+ "ax-dma",
  "ax-driver",
  "ax-errno",
  "ax-feat",
@@ -7572,6 +7584,7 @@ dependencies = [
  "ringbuf",
  "riscv 0.16.0",
  "scope-local",
+ "sg2002-tpu",
  "slab",
  "spin 0.10.0",
  "starry-process",

@@ -140,6 +140,7 @@ members = [
     "drivers/rdrive",
     "drivers/rdrive-macros",
     "drivers/serial/some-serial",
+    "drivers/tpu/sg2002-tpu",
     "drivers/soc/rockchip/rockchip-pm",
     "drivers/soc/rockchip/rockchip-soc",
     "os/StarryOS/kernel",
@@ -375,6 +376,7 @@ rockchip-npu = { version = "0.2", path = "drivers/npu/rockchip-npu" }
 realtek-rtl8125 = { version = "0.2", path = "drivers/net/realtek-rtl8125" }
 rockchip-pm = { version = "0.4", path = "drivers/soc/rockchip/rockchip-pm" }
 rockchip-soc = { version = "0.2", path = "drivers/soc/rockchip/rockchip-soc" }
+sg2002-tpu = { version = "0.1", path = "drivers/tpu/sg2002-tpu" }
 rdrive = { version = "0.20", path = "drivers/rdrive" }
 rdrive-macros = { version = "0.4", path = "drivers/rdrive-macros" }
 rsext4 = { version = "0.4.0", path = "components/rsext4" }
