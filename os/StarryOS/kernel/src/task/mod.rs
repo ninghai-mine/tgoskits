@@ -14,7 +14,7 @@ use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use core::{
     cell::RefCell,
     ops::Deref,
-    sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicUsize, Ordering},
 };
 
 use ax_hal::time::TimeValue;
@@ -125,6 +125,17 @@ pub struct Thread {
 
     /// Process credentials (uid, gid, etc.).
     cred: SpinNoIrq<Arc<Cred>>,
+
+    /// Signo (as u8) of the synchronous user-mode fault that
+    /// [`raise_signal_fatal`] last force-delivered to this thread, or 0
+    /// for "no fault dump owed". [`check_signals`] only emits the
+    /// register dump when the signal it is about to terminate on
+    /// matches this signo — otherwise a low-numbered pending signal
+    /// (e.g. an external SIGTERM that landed before the SIGSEGV from a
+    /// page fault) would consume the flag and either dump for the
+    /// wrong context or, if it had a user handler, swallow the dump so
+    /// the real fault terminated silently.
+    pub fault_dump_signo: AtomicU8,
 }
 
 impl Thread {
@@ -148,6 +159,7 @@ impl Thread {
             rseq_area: AtomicUsize::new(0),
             pdeathsig: AtomicU32::new(0),
             cred: SpinNoIrq::new(cred),
+            fault_dump_signo: AtomicU8::new(0),
         })
     }
 
