@@ -663,7 +663,10 @@ pub fn sys_sync() -> AxResult<isize> {
     Ok(0)
 }
 
-pub fn sys_syncfs(_fd: i32) -> AxResult<isize> {
-    warn!("dummy sys_syncfs");
+pub fn sys_syncfs(fd: c_int) -> AxResult<isize> {
+    debug!("sys_syncfs <= fd: {fd}");
+    // TODO: File::from_fd only accepts regular file fds; Linux syncfs(2) accepts any fd type.
+    let f = crate::file::File::from_fd(fd)?;
+    f.inner().location().filesystem().flush()?;
     Ok(0)
 }
