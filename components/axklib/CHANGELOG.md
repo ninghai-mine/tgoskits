@@ -7,14 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.10](https://github.com/rcore-os/tgoskits/compare/ax-fs-vfs-v0.3.9...ax-fs-vfs-v0.3.10) - 2026-05-19
+## [0.5.8](https://github.com/rcore-os/tgoskits/compare/axklib-v0.5.7...axklib-v0.5.8) - 2026-05-19
 
 ### Other
 
 - updated the following local packages: ax-errno
-
-## [0.3.9](https://github.com/rcore-os/tgoskits/compare/ax-fs-vfs-v0.3.8...ax-fs-vfs-v0.3.9) - 2026-05-15
-
-### Other
-
-- *(axfs-crates)* inherit workspace metadata
