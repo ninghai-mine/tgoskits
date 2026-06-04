@@ -1,0 +1,51 @@
+# ============================================================================
+# Monitor Guest VM Configuration
+# ============================================================================
+# This VM runs the crash monitor (monitor_guest) and watches the Target Guest.
+# When the target crashes, the monitor:
+#   1. Detects the crash (watchdog / IVC heartbeat check)
+#   2. Calls HVC #7 to freeze the target VM
+#   3. Calls HVC #8 to read target vCPU registers
+#   4. Saves a vmcore JSON file to persistent storage
+# ============================================================================
+
+[base]
+# Guest VM id — must NOT conflict with target guest (id=1) or other VMs.
+id = 2
+# Guest VM name.
+name = "monitor-guest"
+# Virtualization type: 1 = VM.
+vm_type = 1
+# The number of virtual CPUs (monitor only needs 1).
+cpu_num = 1
+# Pin to a different physical CPU than target guest to avoid contention.
+phys_cpu_ids = [1]
+
+[kernel]
+# Entry point of the monitor_guest unikernel binary.
+entry_point = 0x8020_0000
+# Load from filesystem.
+image_location = "fs"
+# Path to the compiled monitor_guest kernel image.
+# IMPORTANT: monitor_guest must be compiled as a no_std unikernel
+#            (e.g., using ArceOS or another bare-metal runtime) before
+#            it can run as a VM under axvisor.
+kernel_path = "/guest/monitor/monitor_guest"
+# Load address in guest physical memory.
+kernel_load_addr = 0x8020_0000
+# Device tree blob load address.
+dtb_load_addr = 0x8000_0000
+
+# Memory regions: (base_gpa, size, flags, map_type).
+# 128 MB is sufficient for the monitoring logic.
+memory_regions = [
+  [0x8000_0000, 0x0800_0000, 0x7, 1], # 128 MB System RAM, identity-mapped
+]
+
+[devices]
+# Pass through physical interrupts so the monitor can receive timer IRQs.
+interrupt_mode = "passthrough"
+
+passthrough_devices = [
+    ["/"],
+]
