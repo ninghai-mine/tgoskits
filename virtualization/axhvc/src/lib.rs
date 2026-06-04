@@ -183,6 +183,20 @@ pub enum HyperCallCode {
     /// - `Ok(0)` on success
     /// - `Err(_)` if unsubscription fails
     HIVCUnSubscribChannel = 6,
+
+    /// Freeze a target guest VM for crash dump collection.
+    ///
+    /// This hypercall is called by the Monitor Guest to request the hypervisor
+    /// to pause all vCPUs of the target VM, preserving the crash state for
+    /// subsequent data collection.
+    CrashFreezeGuest = 7,
+
+    /// Read the register state of a vCPU in a target guest VM.
+    ///
+    /// This hypercall is called by the Monitor Guest to read the CPU register
+    /// state of a specific vCPU in a crashed VM. The register data is written
+    /// directly into the calling VM's guest physical memory.
+    CrashReadGuestRegs = 8,
 }
 
 /// Error type for invalid hypercall code conversion.
@@ -210,6 +224,8 @@ impl TryFrom<u32> for HyperCallCode {
             4 => Ok(HyperCallCode::HIVCSubscribChannel),
             5 => Ok(HyperCallCode::HIVCUnPublishChannel),
             6 => Ok(HyperCallCode::HIVCUnSubscribChannel),
+            7 => Ok(HyperCallCode::CrashFreezeGuest),
+            8 => Ok(HyperCallCode::CrashReadGuestRegs),
             _ => Err(InvalidHyperCallCode(value)),
         }
     }
@@ -235,6 +251,12 @@ impl core::fmt::Debug for HyperCallCode {
             }
             HyperCallCode::HIVCUnSubscribChannel => {
                 write!(f, "HIVCUnSubscribChannel {:#x}", *self as u32)
+            }
+            HyperCallCode::CrashFreezeGuest => {
+                write!(f, "CrashFreezeGuest {:#x}", *self as u32)
+            }
+            HyperCallCode::CrashReadGuestRegs => {
+                write!(f, "CrashReadGuestRegs {:#x}", *self as u32)
             }
         }?;
         write!(f, ")")

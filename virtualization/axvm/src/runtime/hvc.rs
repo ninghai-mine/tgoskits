@@ -14,9 +14,11 @@
 
 use ax_errno::{AxResult, ax_err, ax_err_type};
 use axhvc::{HyperCallCode, HyperCallResult};
+use axvm_types::VMStatus;
 
 use crate::{
     GuestPhysAddr, MappingFlags,
+    manager,
     runtime::{
         VMRef,
         ivc::{self, IVCChannel},
@@ -290,9 +292,110 @@ impl HyperCall {
 
                 Ok(0)
             }
+            HyperCallCode::CrashFreezeGuest => {
+                let target_vm_id = self.args[0] as usize;
+
+                info!(
+                    "VM[{}] HyperCall {:?} target VM[{}]",
+                    self.vm.id(),
+                    self.code,
+                    target_vm_id
+                );
+
+                let target_vm = manager::get_vm_by_id(target_vm_id).ok_or_else(|| {
+                    ax_err_type!(NotFound, format!("target VM[{}] not found", target_vm_id))
+                })?;
+
+                let current_status = target_vm.vm_status();
+                info!(
+                    "VM[{}] freezing VM[{}] (status={})",
+                    self.vm.id(),
+                    target_vm_id,
+                    current_status
+                );
+
+                target_vm.set_vm_status(VMStatus::Suspended);
+
+                info!("VM[{}] frozen successfully, status=Suspended", target_vm_id);
+                Ok(0)
+            }
+            HyperCallCode::CrashReadGuestRegs => {
+                let target_vm_id = self.args[0] as usize;
+                let target_vcpu_id = self.args[1] as usize;
+                let regs_out_gpa = GuestPhysAddr::from_usize(self.args[2] as usize);
+
+                info!(
+                    "VM[{}] HyperCall {:?} target VM[{}] VCpu[{}]",
+                    self.vm.id(),
+                    self.code,
+                    target_vm_id,
+                    target_vcpu_id
+                );
+
+                let target_vm = manager::get_vm_by_id(target_vm_id).ok_or_else(|| {
+                    ax_err_type!(NotFound, format!("target VM[{}] not found", target_vm_id))
+                })?;
+
+                let target_vcpu = target_vm.vcpu(target_vcpu_id).ok_or_else(|| {
+                    ax_err_type!(NotFound, format!("target VM[{}] VCpu[{}] not found", target_vm_id, target_vcpu_id))
+                })?;
+
+                let regs = read_vcpu_regs(&target_vcpu);
+
+                self.vm.write_to_guest_of(regs_out_gpa, &regs)?;
+
+                info!(
+                    "VM[{}] read VCpu[{}] registers of VM[{}]: ELR={:#018x}",
+                    self.vm.id(), target_vcpu_id, target_vm_id, regs.elr_el1
+                );
+                Ok(0)
+            }
             _ => {
                 warn!("Unsupported hypercall code: {:?}", self.code);
                 ax_err!(Unsupported)?
+            }
+        }
+    }
+}
+
+/// Register state of a crashed vCPU, written to Monitor Guest memory.
+///
+/// This structure mirrors the AArch64 register layout and is written
+/// into the Monitor Guest's address space by the `CrashReadGuestRegs`
+/// hypercall handler.
+#[repr(C)]
+pub struct CrashVcpuRegs {
+    /// General-purpose registers X0–X30 (31 registers)
+    pub gpr: [u64; 31],
+    /// Stack pointer (SP_EL0 at time of trap)
+    pub sp_el0: u64,
+    /// Exception Link Register (ELR_EL1 — the trapped PC)
+    pub elr_el1: u64,
+    /// Saved Program Status Register (SPSR_EL1)
+    pub spsr_el1: u64,
+}
+
+/// Read the CPU register state from a target vCPU.
+///
+/// On AArch64 this reads the TrapFrame (gpr[31], sp_el0, elr, spsr).
+fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
+    use crate::vcpu::AxArchVCpuImpl;
+    cfg_if::cfg_if! {
+        if #[cfg(target_arch = "aarch64")] {
+            let arch_vcpu = vcpu.get_arch_vcpu();
+            CrashVcpuRegs {
+                gpr: arch_vcpu.ctx.gpr,
+                sp_el0: arch_vcpu.ctx.sp_el0,
+                elr_el1: arch_vcpu.ctx.elr,
+                spsr_el1: arch_vcpu.ctx.spsr,
+            }
+        } else {
+            log::warn!("CrashReadGuestRegs: register dump not implemented for this architecture");
+            CrashVcpuRegs {
+                gpr: [0; 31],
+                sp_el0: 0,
+                elr_el1: 0,
+                spsr_el1: 0,
             }
         }
     }

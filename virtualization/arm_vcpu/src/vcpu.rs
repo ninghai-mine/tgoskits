@@ -54,11 +54,13 @@ pub struct VmCpuRegisters {
 pub struct Aarch64VCpu {
     // DO NOT modify `guest_regs` and `host_stack_top` and their order unless you do know what you are doing!
     // DO NOT add anything before or between them unless you do know what you are doing!
-    ctx: TrapFrame,
+    /// The guest general-purpose register context frame (GPRs, ELR, SPSR, SP).
+    pub ctx: TrapFrame,
     host_stack_top: u64,
-    guest_system_regs: GuestSystemRegisters,
+    /// Guest system registers (TTBR, TCR, VBAR, etc.).
+    pub guest_system_regs: GuestSystemRegisters,
     /// The MPIDR_EL1 value for the vCPU.
-    mpidr: u64,
+    pub mpidr: u64,
 }
 
 /// Configuration for creating a new `Aarch64VCpu`
