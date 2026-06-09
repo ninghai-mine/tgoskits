@@ -1,0 +1,16 @@
+[package]
+name = "ax-monitor-guest"
+version = "0.1.0"
+edition.workspace = true
+authors = ["ninghai"]
+license.workspace = true
+publish = false
+description = "Kernel crash monitor guest for AxVisor — detects guest crashes and captures crash context"
+
+[dependencies]
+ax-driver.workspace = true
+ax-hal.workspace = true
+ax-std = { workspace = true, features = ["multitask", "fs", "alloc", "plat-dyn"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde-json-core = "0.6"
+goblin = { version = "0.9", default-features = false, features = ["alloc", "elf32", "elf64", "endian_fd"] }

@@ -85,6 +85,7 @@ members = [
     "os/StarryOS/kernel",
     "os/StarryOS/starryos",
     "os/arceos/api/*",
+    "os/arceos/examples/ax-monitor-guest",
     "os/arceos/examples/helloworld",
     "os/arceos/examples/helloworld-myplat",
     "os/arceos/examples/httpclient",
@@ -193,6 +194,7 @@ ax-handler-table = { version = "0.3.7", path = "components/handler_table" }
 irq-framework = { version = "0.1.0", path = "components/irq-framework" }
 ax-helloworld = { version = "0.3.1", path = "os/arceos/examples/helloworld" }
 ax-helloworld-myplat = { version = "0.3.1", path = "os/arceos/examples/helloworld-myplat" }
+ax-monitor-guest = { version = "0.1.0", path = "os/arceos/examples/ax-monitor-guest" }
 ax-httpclient = { version = "0.3.1", path = "os/arceos/examples/httpclient" }
 ax-httpserver = { version = "0.3.1", path = "os/arceos/examples/httpserver" }
 ax-input = { version = "0.5.15", path = "os/arceos/modules/axinput" }
