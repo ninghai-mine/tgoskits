@@ -15,6 +15,7 @@ fn main() {
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     println!("cargo:rustc-link-search={}", out_dir.display());
+    println!("cargo:rustc-link-arg=-T{}", Build::LD_NAME);
 
     if std::env::var("CARGO_FEATURE_EFI").is_ok() {
         println!("cargo:rustc-cfg=efi");

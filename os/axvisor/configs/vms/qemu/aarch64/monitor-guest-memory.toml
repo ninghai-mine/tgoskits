@@ -1,0 +1,23 @@
+[base]
+id = 2
+name = "monitor-guest"
+vm_type = 1
+cpu_num = 1
+phys_cpu_ids = [0]
+
+[kernel]
+entry_point = 0x8020_0000
+image_location = "memory"
+kernel_path = "../../../../../../target/aarch64-unknown-none-softfloat/release/ax-monitor-guest"
+kernel_load_addr = 0x8020_0000
+dtb_load_addr = 0x8000_0000
+
+memory_regions = [
+  [0x8000_0000, 0x0800_0000, 0x7, 1],
+]
+
+[devices]
+interrupt_mode = "passthrough"
+passthrough_devices = [["/"]]
+excluded_devices = []
+emu_devices = []

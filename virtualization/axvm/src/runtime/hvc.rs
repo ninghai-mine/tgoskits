@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloc::format;
 use ax_errno::{AxResult, ax_err, ax_err_type};
 use axhvc::{HyperCallCode, HyperCallResult};
-use axvm_types::VMStatus;
+use crate::VMStatus;
 
 use crate::{
     GuestPhysAddr, MappingFlags,

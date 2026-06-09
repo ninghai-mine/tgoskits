@@ -1538,6 +1538,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ax-serial-test"
+version = "0.1.0"
+dependencies = [
+ "ax-driver",
+ "ax-hal",
+ "ax-std",
+]
+
+[[package]]
 name = "ax-shell"
 version = "0.3.1"
 dependencies = [
