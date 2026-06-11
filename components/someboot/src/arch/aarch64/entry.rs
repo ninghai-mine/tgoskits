@@ -27,6 +27,14 @@ pub unsafe extern "C" fn kernel_entry(_fdt_addr: usize) {
         "b 1b",              // Loop back
         "2:",
 
+        // HVC test: only at EL1 (guest), skip at EL2 (host)
+        "mrs x8, CurrentEL",
+        "cmp x8, #(1 << 2)",
+        "b.ne 3f",
+        "mov x0, #0xcafe",
+        "hvc #0",
+        "3:",
+
         asm_sym_addr!(x8, "{fdt}"),
         "str  x9, [x8]",
 
