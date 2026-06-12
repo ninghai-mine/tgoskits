@@ -1,5 +1,5 @@
 //! Target Guest vCPU register capture via HVC hypercalls.
-//! ArceOS identity mapping: VA == PA → virt_to_phys is a simple cast.
+//! Uses ax_hal::mem::virt_to_phys for correct VA→GPA translation.
 
 extern crate alloc;
 use alloc::format;
@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 #[cfg(target_arch = "aarch64")]
 use core::arch::asm;
 
+use ax_hal::mem::{virt_to_phys, VirtAddr};
 use serde::{Deserialize, Serialize};
 
 #[repr(C)]
@@ -33,8 +34,6 @@ fn hvc_call(code: u64, x1: u64, x2: u64, x3: u64, x4: u64, x5: u64) -> u64 {
 #[cfg(not(target_arch = "aarch64"))]
 fn hvc_call(_code: u64, _x1: u64, _x2: u64, _x3: u64, _x4: u64, _x5: u64) -> u64 { u64::MAX }
 
-fn virt_to_phys(addr: usize) -> Option<u64> { Some(addr as u64) }
-
 pub fn freeze_target(target_vm_id: u64) -> Result<(), String> {
     let ret = hvc_call(7, target_vm_id, 0, 0, 0, 0);
     if ret == 0 { Ok(()) } else { Err(format!("CrashFreezeGuest failed on VM[{}], ret={}", target_vm_id, ret)) }
@@ -45,8 +44,9 @@ pub fn read_vcpu_regs(target_vm_id: u64, target_vcpu_id: u64) -> Result<CrashVcp
     let page_aligned_size = (buf_size + 4095) / 4096 * 4096;
     let buf = alloc::vec![0u64; page_aligned_size / 8];
     let buf_addr = buf.as_ptr() as usize;
-    let gpa = virt_to_phys(buf_addr).ok_or_else(|| format!("virt_to_phys failed for buffer at {:#x}", buf_addr))?;
-    let ret = hvc_call(8, target_vm_id, target_vcpu_id, gpa, 0, 0);
+    let vaddr = VirtAddr::from_usize(buf_addr);
+    let gpa = virt_to_phys(vaddr).as_usize();
+    let ret = hvc_call(8, target_vm_id, target_vcpu_id, gpa as u64, 0, 0);
     if ret != 0 { return Err(format!("CrashReadGuestRegs failed on VM[{}] VCpu[{}], ret={}", target_vm_id, target_vcpu_id, ret)); }
     let regs = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const CrashVcpuRegs) };
     Ok(regs)

@@ -1,14 +1,14 @@
 [base]
-id = 2
-name = "monitor-guest"
+id = 1
+name = "target-guest"
 vm_type = 1
 cpu_num = 1
-phys_cpu_ids = [1]
+phys_cpu_ids = [0]
 
 [kernel]
 entry_point = 0x8020_0000
 image_location = "memory"
-kernel_path = "../../../../../../target/aarch64-unknown-none-softfloat/release/ax-monitor-guest.bin"
+kernel_path = "../../../../../../target/aarch64-unknown-none-softfloat/release/ax-serial-test.bin"
 kernel_load_addr = 0x8020_0000
 dtb_load_addr = 0x8000_0000
 

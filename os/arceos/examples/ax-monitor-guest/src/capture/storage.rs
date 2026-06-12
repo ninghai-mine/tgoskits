@@ -34,7 +34,8 @@ pub struct VcpuRegsEntry {
 }
 
 pub fn save_vmcore(snapshot: &CrashSnapshot) -> Result<String, String> {
-    ax_std::fs::create_dir(VMCORE_DIR).map_err(|e| format!("cannot create dir: {}", e))?;
+    // Ignore error if directory already exists
+    let _ = ax_std::fs::create_dir(VMCORE_DIR);
     let timestamp = boot_timestamp();
     let event_name = format!("{:?}", snapshot.event);
     let file_name = format!("vmcore_{}_{}.json", timestamp, event_name);

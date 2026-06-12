@@ -24,26 +24,23 @@ unsafe fn hvc_test() -> u64 {
     u64::MAX
 }
 
-/// Direct UART write (crude, no FIFO check)
-unsafe fn uart_write(s: &str) {
-    let uart = 0x900_0000 as *mut u32;
-    for &b in s.as_bytes() {
-        unsafe {
-            core::ptr::write_volatile(uart, b as u32);
-        }
-    }
-}
-
 #[unsafe(no_mangle)]
 fn main() {
-    // Test 1: HVC call - axvisor should log this
-    let hvc_result = unsafe { hvc_test() };
+    // HVC test: axvisor should log this
+    let _hvc_result = unsafe { hvc_test() };
     
-    // Test 2: Direct UART write (no busy wait)
-    unsafe { uart_write("!\n"); }
-    
-    // Test 3: ax_std println
-    println!("Hello from ArceOS VM guest! HVC result={}", hvc_result);
+    // Print a message (uses earlycon with proper fixmap)
+    println!("Hello from ArceOS VM guest!");
 
-    loop {}
+    // Trigger a real crash: null pointer dereference (Data Abort at EL1)
+    println!("About to crash: writing to NULL...");
+    unsafe {
+        core::ptr::write_volatile(0x0 as *mut u64, 0xDEAD);
+    }
+
+    // Should never reach here
+    #[allow(unreachable_code)]
+    loop {
+        core::hint::spin_loop();
+    }
 }
