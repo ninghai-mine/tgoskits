@@ -374,21 +374,63 @@ pub struct CrashVcpuRegs {
     pub elr_el1: u64,
     /// Saved Program Status Register (SPSR_EL1)
     pub spsr_el1: u64,
+    /// Exception Syndrome Register (ESR_EL1)
+    ///   - bit[31:26]: Exception Class (EC)
+    ///   - bit[24:0]:  Instruction Specific Syndrome (ISS)
+    ///   0 means no synchronous exception (e.g., watchdog timeout)
+    pub esr_el1: u64,
+    /// Fault Address Register (FAR_EL1)
+    ///   - Data Abort: virtual address that caused the fault
+    ///   - NULL pointer crash: 0x0
+    pub far_el1: u64,
+    /// Crash type classification for quick diagnosis
+    ///   0=None, 1=DataAbort, 2=UndefinedInstruction, 3=InstructionAbort,
+    ///   4=PcAlignmentFault, 5=SError
+    pub crash_type: u8,
+    /// Padding to keep struct 8-byte aligned
+    pub _padding: [u8; 7],
 }
 
 /// Read the CPU register state from a target vCPU.
 ///
-/// On AArch64 this reads the TrapFrame (gpr[31], sp_el0, elr, spsr).
+/// On AArch64 this reads the TrapFrame (gpr[31], sp_el0, elr, spsr),
+/// plus ESR_EL1 and FAR_EL1 via mrs from EL2.
 fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
     use crate::vcpu::AxArchVCpuImpl;
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "aarch64")] {
             let arch_vcpu = vcpu.get_arch_vcpu();
+
+            // Read ESR_EL1 and FAR_EL1 via mrs from EL2.
+            // These EL1 system registers are accessible from EL2 and
+            // retain their values even after subsequent VM exits (HVC #7/#8).
+            let esr: u64;
+            let far: u64;
+            unsafe {
+                core::arch::asm!("mrs {}, esr_el1", out(reg) esr);
+                core::arch::asm!("mrs {}, far_el1", out(reg) far);
+            }
+
+            // Classify crash type from ESR Exception Class
+            let ec = (esr >> 26) & 0x3F;
+            let crash_type = match ec {
+                0x24 | 0x25 => 1,  // DataAbort
+                0x22        => 2,  // UndefinedInstruction
+                0x20 | 0x21 => 3,  // InstructionAbort
+                0x23        => 4,  // PcAlignmentFault
+                0x30        => 5,  // SError
+                _           => 0,  // None
+            };
+
             CrashVcpuRegs {
                 gpr: arch_vcpu.ctx.gpr,
                 sp_el0: arch_vcpu.ctx.sp_el0,
                 elr_el1: arch_vcpu.ctx.elr,
                 spsr_el1: arch_vcpu.ctx.spsr,
+                esr_el1: esr,
+                far_el1: far,
+                crash_type,
+                _padding: [0; 7],
             }
         } else {
             log::warn!("CrashReadGuestRegs: register dump not implemented for this architecture");
@@ -397,6 +439,10 @@ fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
                 sp_el0: 0,
                 elr_el1: 0,
                 spsr_el1: 0,
+                esr_el1: 0,
+                far_el1: 0,
+                crash_type: 0,
+                _padding: [0; 7],
             }
         }
     }

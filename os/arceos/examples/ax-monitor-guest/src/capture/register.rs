@@ -19,6 +19,14 @@ pub struct CrashVcpuRegs {
     pub sp_el0: u64,
     pub elr_el1: u64,
     pub spsr_el1: u64,
+    /// Exception Syndrome Register (ESR_EL1)
+    pub esr_el1: u64,
+    /// Fault Address Register (FAR_EL1)
+    pub far_el1: u64,
+    /// Crash type: 0=None, 1=DataAbort, 2=UndefinedInstr, 3=InstrAbort, 4=PCAlign, 5=SError
+    pub crash_type: u8,
+    /// Padding for 8-byte alignment
+    pub _padding: [u8; 7],
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -58,7 +66,8 @@ pub fn freeze_and_read_all(target_vm_id: u64, vcpu_count: u64) -> Result<Vec<(u6
     for vcpu_id in 0..vcpu_count {
         match read_vcpu_regs(target_vm_id, vcpu_id) {
             Ok(regs) => {
-                ax_std::println!("[register] VM[{}] VCpu[{}] ELR={:#018x}", target_vm_id, vcpu_id, regs.elr_el1);
+            ax_std::println!("[register] VM[{}] VCpu[{}] ELR={:#018x} ESR={:#x} FAR={:#x}",
+                target_vm_id, vcpu_id, regs.elr_el1, regs.esr_el1, regs.far_el1);
                 results.push((vcpu_id, regs));
             }
             Err(e) => {
@@ -74,7 +83,10 @@ pub fn freeze_and_read_all(target_vm_id: u64, vcpu_count: u64) -> Result<Vec<(u6
 mod tests {
     use super::*;
     #[test]
-    fn test_size() { assert_eq!(core::mem::size_of::<CrashVcpuRegs>(), 31 * 8 + 3 * 8); }
+    fn test_size() {
+        // 31*8 + sp_el0(8) + elr_el1(8) + spsr_el1(8) + esr_el1(8) + far_el1(8) + crash_type(1) + _padding(7) = 280
+        assert_eq!(core::mem::size_of::<CrashVcpuRegs>(), 31 * 8 + 8 + 8 + 8 + 8 + 8 + 1 + 7);
+    }
     #[test]
     fn test_default() {
         let r = CrashVcpuRegs::default();

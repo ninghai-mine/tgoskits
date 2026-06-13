@@ -31,6 +31,9 @@ pub struct VcpuRegsEntry {
     pub sp_el0: u64,
     pub elr_el1: u64,
     pub spsr_el1: u64,
+    pub esr_el1: u64,
+    pub far_el1: u64,
+    pub crash_type: u8,
 }
 
 pub fn save_vmcore(snapshot: &CrashSnapshot) -> Result<String, String> {
@@ -46,6 +49,7 @@ pub fn save_vmcore(snapshot: &CrashSnapshot) -> Result<String, String> {
         crash_event: event_name, vcpu_count: snapshot.vcpu_regs.len(),
         registers: snapshot.vcpu_regs.iter().map(|(id, r)| VcpuRegsEntry {
             vcpu_id: *id, gpr: r.gpr, sp_el0: r.sp_el0, elr_el1: r.elr_el1, spsr_el1: r.spsr_el1,
+            esr_el1: r.esr_el1, far_el1: r.far_el1, crash_type: r.crash_type,
         }).collect(),
         memory_dump_offset: None, kernel_log: None,
     };
@@ -74,7 +78,9 @@ mod tests {
     fn test_roundtrip() {
         let vmcore = VmcoreFile { vmcore_version: "1.0".into(), timestamp: "t".into(), target_vm_id: 1,
             crash_event: "Panic".into(), vcpu_count: 1,
-            registers: vec![VcpuRegsEntry { vcpu_id: 0, gpr: [0x42; 31], sp_el0: 0x1000, elr_el1: 0xffff000008000000, spsr_el1: 0x3c5 }],
+            registers: vec![VcpuRegsEntry { vcpu_id: 0, gpr: [0x42; 31], sp_el0: 0x1000,
+                elr_el1: 0xffff000008000000, spsr_el1: 0x3c5,
+                esr_el1: 0x96000044, far_el1: 0, crash_type: 1 }],
             memory_dump_offset: None, kernel_log: None };
         let json = serde_json_core::to_string::<_, 4096>(&vmcore).unwrap();
         let (parsed, _): (VmcoreFile, _) = serde_json_core::from_str(&json).unwrap();
