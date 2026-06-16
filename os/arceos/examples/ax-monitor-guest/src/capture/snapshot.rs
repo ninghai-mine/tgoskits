@@ -4,6 +4,8 @@ use alloc::vec::Vec;
 use crate::capture::register::{self, CrashVcpuRegs};
 use crate::capture::storage;
 use crate::monitor::event::CrashEvent;
+use crate::recovery::analyzer;
+use crate::recovery::report;
 use serde::{Deserialize, Serialize};
 
 /// Target VM configuration — should be set from VM config at startup.
@@ -46,7 +48,42 @@ pub fn capture_snapshot(event: CrashEvent) {
 
     ax_std::println!("[capture] snapshot captured");
 
-    if let Err(e) = storage::save_vmcore(&snapshot) {
-        ax_std::println!("[capture] failed to save vmcore: {}", e);
+    // Step 2: Save vmcore to persistent storage.
+    if let Ok(vmcore_path) = storage::save_vmcore(&snapshot) {
+        ax_std::println!("[capture] vmcore saved at: {}", vmcore_path);
+
+        // Step 3: Load vmcore and run recovery analysis.
+        if let Some(vmcore) = storage::load_vmcore(&vmcore_path) {
+            ax_std::println!("[recovery] starting crash analysis...");
+
+            let result = analyzer::analyze(
+                &vmcore,
+                &|_| None, // No memory dump available yet
+                None,       // No symbol table available yet
+            );
+
+            // Print analysis summary to console.
+            ax_std::println!("[recovery] analysis summary: {}", result.summary);
+            for cause in &result.possible_causes {
+                ax_std::println!("[recovery]   - {}", cause);
+            }
+
+            // Step 4: Save analysis reports (with _analysis suffix to avoid overwriting vmcore).
+            let report_base = alloc::format!("{}_analysis", vmcore_path.trim_end_matches(".json"));
+            match report::save_reports(&result, &report_base) {
+                Ok((json_path, md_path)) => {
+                    ax_std::println!("[recovery] analysis reports saved:");
+                    ax_std::println!("  JSON: {}", json_path);
+                    ax_std::println!("  MD:   {}", md_path);
+                }
+                Err(e) => {
+                    ax_std::println!("[recovery] failed to save reports: {}", e);
+                }
+            }
+        } else {
+            ax_std::println!("[recovery] failed to load vmcore for analysis");
+        }
+    } else {
+        ax_std::println!("[capture] failed to save vmcore");
     }
 }

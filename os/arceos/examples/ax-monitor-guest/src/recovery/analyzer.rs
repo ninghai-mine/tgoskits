@@ -83,7 +83,7 @@ pub fn analyze(
     // Step 3 — Extract key registers (including ESR/FAR).
     let key_registers = primary_vcpu
         .map(|regs| {
-            let mut keys = vec![
+            let keys = vec![
                 ("ELR_EL1".into(), regs.elr_el1),
                 ("SP_EL0".into(), regs.sp_el0),
                 ("SPSR_EL1".into(), regs.spsr_el1),
