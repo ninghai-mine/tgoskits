@@ -302,6 +302,9 @@ mod tests {
                 sp_el0: 0x9000,
                 elr_el1: 0xffff_0000_0000_1234,
                 spsr_el1: 0x3c5,
+                esr_el1: 0,
+                far_el1: 0,
+                crash_type: 0,
             }],
             memory_dump_offset: None,
             kernel_log: None,
@@ -324,4 +327,3 @@ mod tests {
         assert!(result.summary.contains("exception"));
     }
 }
-
