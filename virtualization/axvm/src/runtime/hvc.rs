@@ -401,15 +401,13 @@ fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
         if #[cfg(target_arch = "aarch64")] {
             let arch_vcpu = vcpu.get_arch_vcpu();
 
-            // Read ESR_EL1 and FAR_EL1 via mrs from EL2.
-            // These EL1 system registers are accessible from EL2 and
-            // retain their values even after subsequent VM exits (HVC #7/#8).
-            let esr: u64;
-            let far: u64;
-            unsafe {
-                core::arch::asm!("mrs {}, esr_el1", out(reg) esr);
-                core::arch::asm!("mrs {}, far_el1", out(reg) far);
-            }
+            // Read ESR_EL2 and FAR_EL2 from the TrapFrame, which were saved
+            // by exception.S at the moment of VM exit (the last exception).
+            // This is the ONLY reliable way to get the crash syndrome — the
+            // hardware registers ESR_EL2/FAR_EL2 would have been overwritten
+            // by subsequent VM exits (HVC #7/#8).
+            let esr = arch_vcpu.ctx.esr_el2;
+            let far = arch_vcpu.ctx.far_el2;
 
             // Classify crash type from ESR Exception Class
             let ec = (esr >> 26) & 0x3F;

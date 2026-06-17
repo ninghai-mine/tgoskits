@@ -1,6 +1,6 @@
 .macro SAVE_REGS_FROM_EL1
     # Curretly `sp` points to the address of `Aarch64VCpu.host_stack_top`.
-    sub     sp, sp, 34 * 8
+    sub     sp, sp, 36 * 8
     # Curretly `sp` points to the base address of `Aarch64VCpu.ctx`, which stores guest's `TrapFrame`.
 
     # Save general purpose registers into `Aarch64VCpu.ctx`
@@ -27,6 +27,11 @@
     mrs     x10, elr_el2
     mrs     x11, spsr_el2
     stp     x10, x11, [sp, 32 * 8]
+
+    # Save `esr_el2` and `far_el2` into `Aarch64VCpu.ctx`
+    mrs     x12, esr_el2
+    mrs     x13, far_el2
+    stp     x12, x13, [sp, 34 * 8]
 .endm
 
 .macro RESTORE_REGS_INTO_EL1
@@ -53,7 +58,7 @@
     ldp     x2, x3, [sp, 2 * 8]
     ldp     x0, x1, [sp]
     # Curretly `sp` points to the base address of `Aarch64VCpu.ctx`
-    add     sp, sp, 34 * 8
+    add     sp, sp, 36 * 8
      # Curretly `x0` points to the address of `Aarch64VCpu.host_stack_top`.
 .endm
 

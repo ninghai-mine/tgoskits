@@ -22,7 +22,9 @@ use aarch64_cpu::registers::*;
 /// * the general-purpose registers (GPRs),
 /// * the stack pointer associated with EL0 (SP_EL0),
 /// * the exception link register (ELR),
-/// * the saved program status register (SPSR).
+/// * the saved program status register (SPSR),
+/// * the exception syndrome register (ESR_EL2) — saved at each VM exit,
+/// * the fault address register (FAR_EL2) — saved at each VM exit.
 ///
 /// The `#[repr(C)]` attribute ensures that the struct has a C-compatible
 /// memory layout, which is important when interfacing with hardware or
@@ -38,6 +40,13 @@ pub struct Aarch64ContextFrame {
     pub elr: u64,
     /// The saved program status register, which holds the state of the program at the time of an exception.
     pub spsr: u64,
+    /// The exception syndrome register (ESR_EL2), saved at each VM exit.
+    ///   - bit[31:26]: Exception Class (EC)
+    ///   - bit[24:0]:  Instruction Specific Syndrome (ISS)
+    pub esr_el2: u64,
+    /// The fault address register (FAR_EL2), saved at each VM exit.
+    ///   - Data Abort: the virtual address that caused the fault
+    pub far_el2: u64,
 }
 
 /// Implementations of [`fmt::Display`] for [`Aarch64ContextFrame`].
@@ -52,6 +61,8 @@ impl core::fmt::Display for Aarch64ContextFrame {
         writeln!(f, "spsr:{:016x}", self.spsr)?;
         write!(f, "elr: {:016x}", self.elr)?;
         writeln!(f, "   sp_el0:  {:016x}", self.sp_el0)?;
+        writeln!(f, "esr_el2:{:016x}", self.esr_el2)?;
+        writeln!(f, "far_el2:{:016x}", self.far_el2)?;
         Ok(())
     }
 }
@@ -71,6 +82,8 @@ impl Default for Aarch64ContextFrame {
                 .value,
             elr: 0,
             sp_el0: 0,
+            esr_el2: 0,
+            far_el2: 0,
         }
     }
 }

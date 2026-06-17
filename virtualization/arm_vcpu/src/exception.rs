@@ -323,7 +323,7 @@ fn current_el_sync_handler(tf: &mut TrapFrame) {
 /// 1. **Restore Previous Host Stack pointor:**
 ///     - The guest context frame is aleady saved by `SAVE_REGS_FROM_EL1` macro in exception.S.
 ///       This function firstly adjusts the `sp` to skip the exception frame
-///       (adding `34 * 8` to the stack pointer) according to the memory layout of `Aarch64VCpu` struct,
+///       (adding `36 * 8` to the stack pointer) according to the memory layout of `Aarch64VCpu` struct,
 ///       which makes current `sp` point to the address of `host_stack_top`.
 ///       The host stack top value is restored by `ldr`.
 ///
@@ -354,7 +354,7 @@ fn current_el_sync_handler(tf: &mut TrapFrame) {
 unsafe extern "C" fn vmexit_trampoline() -> ! {
     core::arch::naked_asm!(
         // Curretly `sp` points to the base address of `Aarch64VCpu.ctx`, which stores guest's `TrapFrame`.
-        "add x9, sp, 34 * 8", // Skip the exception frame.
+        "add x9, sp, 36 * 8", // Skip the exception frame.
         // Currently `x9` points to `&Aarch64VCpu.host_stack_top`, see `run_guest()` in vcpu.rs.
         "ldr x10, [x9]", // Get `host_stack_top` value from `&Aarch64VCpu.host_stack_top`.
         "mov sp, x10",   // Set `sp` as the host stack top.
