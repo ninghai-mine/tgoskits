@@ -11,6 +11,7 @@ use crate::capture::memory;
 use crate::monitor::event::CrashEvent;
 use crate::recovery::analyzer;
 use crate::recovery::report;
+use crate::recovery::symbol::SymbolTable;
 use serde::{Deserialize, Serialize};
 
 /// Target VM configuration — should be set from VM config at startup.
@@ -21,6 +22,22 @@ const TARGET_VCPU_COUNT: u64 = 1;
 const MEMORY_REGIONS: &[(u64, usize)] = &[
     (0x8000_0000, 0x0800_0000), // 8 MB of Guest RAM
 ];
+
+/// Guest kernel linear mapping offset (GVA → GPA).
+/// StarryOS/ArceOS AArch64 uses KERNEL_ASPACE_BASE = 0xffff_8000_0000_0000,
+/// so the kernel virtual address is: GPA + PHYS_VIRT_OFFSET.
+const PHYS_VIRT_OFFSET: u64 = 0xffff_8000_0000_0000;
+
+/// Path to the target kernel ELF (with symbol table) inside the monitor guest's filesystem.
+/// Set to empty string to disable symbol resolution.
+/// The ELF must be baked into the monitor-guest image at build time.
+const KERNEL_ELF_PATH: &str = "";
+
+/// Kernel base virtual address for symbol table lookups.
+/// If the ELF has absolute virtual addresses (ET_EXEC linked at KERNEL_BASE_VADDR),
+/// set this to 0 so that `addr - 0 = addr` matches `sym.st_value` directly.
+/// If the ELF has relative offsets (PIE), set this to PHYS_VIRT_OFFSET + kernel_load_addr.
+const KERNEL_BASE_ADDR: u64 = 0;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MemorySegment {
@@ -62,7 +79,9 @@ pub fn capture_snapshot(event: CrashEvent) {
     };
 
     // Step 2: Dump guest physical memory via HVC #9.
-    let memory_segments = match memory::dump_memory_regions(TARGET_VM_ID, MEMORY_REGIONS) {
+    // Keep both the metadata (for vmcore JSON) and the raw data (for analysis closure).
+    let memory_segments: Vec<MemorySegment>;
+    let memory_regions_data: Vec<(u64, Vec<u8>)> = match memory::dump_memory_regions(TARGET_VM_ID, MEMORY_REGIONS) {
         Ok(segments) => {
             let mut out = Vec::new();
             for (base, data) in &segments {
@@ -82,10 +101,12 @@ pub fn capture_snapshot(event: CrashEvent) {
                     }
                 }
             }
-            out
+            memory_segments = out;
+            segments
         }
         Err(e) => {
             ax_std::println!("[capture] memory dump failed: {}", e);
+            memory_segments = Vec::new();
             Vec::new()
         }
     };
@@ -106,13 +127,49 @@ pub fn capture_snapshot(event: CrashEvent) {
         if let Some(vmcore) = storage::load_vmcore(&vmcore_path) {
             ax_std::println!("[recovery] starting crash analysis...");
 
+            // Build a memory reader closure that translates Guest Virtual Address
+            // → Guest Physical Address and looks up data in the dumped segments.
+            let mem_reader = |addr: u64| -> Option<u64> {
+                // GVA → GPA translation (linear mapping)
+                let gpa = if addr >= PHYS_VIRT_OFFSET {
+                    addr.wrapping_sub(PHYS_VIRT_OFFSET)
+                } else {
+                    addr
+                };
+                // Find which memory segment contains this GPA
+                let (base, data) = memory_regions_data
+                    .iter()
+                    .find(|(base, data)| gpa >= *base && gpa < *base + data.len() as u64)?;
+                let offset = (gpa - *base) as usize;
+                if offset + 8 > data.len() {
+                    return None;
+                }
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&data[offset..offset + 8]);
+                Some(u64::from_le_bytes(bytes))
+            };
+
+            // Try to load kernel ELF symbol table for function name resolution.
+            // Gracefully degrades to None if ELF is not available.
+            let sym = if !KERNEL_ELF_PATH.is_empty() {
+                match SymbolTable::from_kernel_elf(KERNEL_ELF_PATH, KERNEL_BASE_ADDR) {
+                    Ok(table) => {
+                        ax_std::println!("[recovery] symbol table loaded: {} symbols", table.len());
+                        Some(table)
+                    }
+                    Err(e) => {
+                        ax_std::println!("[recovery] symbol table unavailable: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
             let result = analyzer::analyze(
                 &vmcore,
-                &|_addr| { // Memory reader closure — looks up segments by address
-                    // TODO: integrate with symbol table lookup
-                    None
-                },
-                None,       // No symbol table available yet
+                &mem_reader,
+                sym.as_ref(),
             );
 
             // Print analysis summary to console.
