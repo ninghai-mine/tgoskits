@@ -198,18 +198,26 @@ pub enum HyperCallCode {
     /// directly into the calling VM's guest physical memory.
     CrashReadGuestRegs = 8,
 
-    /// Read a chunk of guest physical memory from a target VM.
+    /// Read physical memory from a frozen target guest VM.
     ///
-    /// This hypercall is called by the Monitor Guest to read raw memory from
-    /// a crashed target VM. The memory content is written directly into the
-    /// calling VM's guest physical memory at the provided destination address.
+    /// This hypercall is called by the Monitor Guest to read the physical memory
+    /// of a target VM that has been frozen via `CrashFreezeGuest`. The data is
+    /// read via Stage-2 page table translation and copied into the calling VM's
+    /// buffer.
     ///
-    /// # Arguments (in x1..x5)
+    /// # Arguments (x0-x5)
     ///
+    /// - `x0` = 9 (this code)
     /// - `x1` = target_vm_id
-    /// - `x2` = src_gpa (guest physical address in the target VM to read from)
-    /// - `x3` = size   (number of bytes to read, max 1 page / 4096)
-    /// - `x4` = dest_gpa (guest physical address in the calling VM to write to)
+    /// - `x2` = target_gpa (start address in target's physical address space)
+    /// - `x3` = buf_gpa (destination buffer in caller's address space)
+    /// - `x4` = size (number of bytes to read, max 1 MB)
+    /// - `x5` = flags (reserved, must be 0)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(n)` on success, where `n` is the actual number of bytes read
+    /// - `Err(_)` if the target VM is not found or the operation fails
     CrashReadGuestMem = 9,
 }
 
@@ -240,6 +248,7 @@ impl TryFrom<u32> for HyperCallCode {
             6 => Ok(HyperCallCode::HIVCUnSubscribChannel),
             7 => Ok(HyperCallCode::CrashFreezeGuest),
             8 => Ok(HyperCallCode::CrashReadGuestRegs),
+            9 => Ok(HyperCallCode::CrashReadGuestMem),
             _ => Err(InvalidHyperCallCode(value)),
         }
     }
@@ -271,6 +280,9 @@ impl core::fmt::Debug for HyperCallCode {
             }
             HyperCallCode::CrashReadGuestRegs => {
                 write!(f, "CrashReadGuestRegs {:#x}", *self as u32)
+            }
+            HyperCallCode::CrashReadGuestMem => {
+                write!(f, "CrashReadGuestMem {:#x}", *self as u32)
             }
         }?;
         write!(f, ")")

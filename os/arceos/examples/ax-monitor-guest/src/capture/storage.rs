@@ -11,6 +11,14 @@ use serde::{Deserialize, Serialize};
 const VMCORE_VERSION: &str = "1.0";
 const VMCORE_DIR: &str = "/vmcore";
 
+/// A reference to an external memory dump binary file.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MemoryDumpRef {
+    pub base_gpa: u64,
+    pub size: usize,
+    pub path: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VmcoreFile {
     pub vmcore_version: String,
@@ -21,6 +29,8 @@ pub struct VmcoreFile {
     pub registers: Vec<VcpuRegsEntry>,
     pub memory_dump_offset: Option<u64>,
     pub kernel_log: Option<String>,
+    /// References to external memory segment files (added by C1 memory dump).
+    pub memory_segments: Vec<MemoryDumpRef>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +61,11 @@ pub fn save_vmcore(snapshot: &CrashSnapshot) -> Result<String, String> {
             esr_el1: r.esr_el1, far_el1: r.far_el1, crash_type: r.crash_type,
         }).collect(),
         memory_dump_offset: None, kernel_log: None,
+        memory_segments: snapshot.memory_segments.iter().map(|s| MemoryDumpRef {
+            base_gpa: s.base_gpa,
+            size: s.size,
+            path: s.path.clone(),
+        }).collect(),
     };
 
     let json = serde_json_core::to_string::<_, 4096>(&vmcore).map_err(|e| format!("serialization: {}", e))?;

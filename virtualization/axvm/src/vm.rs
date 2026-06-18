@@ -883,54 +883,59 @@ impl AxVM {
         }
     }
 
-    /// Reads raw bytes from guest physical memory into the provided buffer.
-    pub fn read_guest_bytes(&self, gpa: GuestPhysAddr, buf: &mut [u8]) -> AxResult {
+    /// Reads raw bytes from the guest physical address into a caller-provided buffer.
+    ///
+    /// This is used by the `CrashReadGuestMem` hypercall handler to copy arbitrary
+    /// amounts of data from a target VM's physical memory.
+    pub fn read_guest_bytes(&self, gpa: GuestPhysAddr, buf: &mut [u8]) -> AxResult<usize> {
         let size = buf.len();
         if size == 0 {
-            return Ok(());
+            return Ok(0);
         }
         let g = self.inner_mut.lock();
         match g.address_space.translated_byte_buffer(gpa, size) {
-            Some(chunks) => {
-                let mut offset = 0;
-                for chunk in &chunks {
-                    let remaining = size - offset;
-                    let copy_len = remaining.min(chunk.len());
-                    buf[offset..offset + copy_len].copy_from_slice(&chunk[..copy_len]);
-                    offset += copy_len;
-                    if offset >= size {
+            Some(buffers) => {
+                let mut copied = 0;
+                for chunk in buffers {
+                    let remaining = size - copied;
+                    let chunk_size = remaining.min(chunk.len());
+                    buf[copied..copied + chunk_size].copy_from_slice(&chunk[..chunk_size]);
+                    copied += chunk_size;
+                    if copied >= size {
                         break;
                     }
                 }
-                if offset < size {
-                    return ax_err!(InvalidInput, "Insufficient data in guest memory");
-                }
-                Ok(())
+                Ok(copied)
+            }
             }
             None => ax_err!(InvalidInput, "Failed to translate guest physical address"),
         }
     }
 
-    /// Writes raw bytes from the provided buffer into guest physical memory.
-    pub fn write_guest_bytes(&self, gpa: GuestPhysAddr, buf: &[u8]) -> AxResult {
+    /// Writes raw bytes from a caller-provided buffer into the guest physical address.
+    ///
+    /// This is used by the `CrashReadGuestMem` hypercall handler to copy arbitrary
+    /// amounts of data into the calling VM's buffer.
+    pub fn write_guest_bytes(&self, gpa: GuestPhysAddr, buf: &[u8]) -> AxResult<usize> {
         let size = buf.len();
         if size == 0 {
-            return Ok(());
+            return Ok(0);
         }
-        let mut g = self.inner_mut.lock();
+        let g = self.inner_mut.lock();
         match g.address_space.translated_byte_buffer(gpa, size) {
-            Some(mut chunks) => {
-                let mut offset = 0;
-                for chunk in chunks.iter_mut() {
-                    let remaining = size - offset;
-                    let copy_len = remaining.min(chunk.len());
-                    chunk[..copy_len].copy_from_slice(&buf[offset..offset + copy_len]);
-                    offset += copy_len;
-                    if offset >= size {
+            Some(mut buffers) => {
+                let mut copied = 0;
+                for chunk in buffers.iter_mut() {
+                    let remaining = size - copied;
+                    let chunk_size = remaining.min(chunk.len());
+                    chunk[..chunk_size].copy_from_slice(&buf[copied..copied + chunk_size]);
+                    copied += chunk_size;
+                    if copied >= size {
                         break;
                     }
                 }
-                Ok(())
+                Ok(copied)
+            }
             }
             None => ax_err!(InvalidInput, "Failed to translate guest physical address"),
         }
