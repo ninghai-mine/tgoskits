@@ -85,6 +85,7 @@ core::arch::global_asm!(
 pub fn handle_exception_sync(ctx: &mut TrapFrame) -> AxResult<AxVCpuExitReason> {
     match exception_class() {
         Some(ESR_EL2::EC::Value::DataAbortLowerEL) => {
+            ctx.capture_crash_regs();
             let elr = ctx.exception_pc();
             let val = elr + exception_next_instruction_step();
             ctx.set_exception_pc(val);
@@ -354,7 +355,7 @@ fn current_el_sync_handler(tf: &mut TrapFrame) {
 unsafe extern "C" fn vmexit_trampoline() -> ! {
     core::arch::naked_asm!(
         // Curretly `sp` points to the base address of `Aarch64VCpu.ctx`, which stores guest's `TrapFrame`.
-        "add x9, sp, 36 * 8", // Skip the exception frame.
+        "add x9, sp, 39 * 8", // Skip the exception frame.
         // Currently `x9` points to `&Aarch64VCpu.host_stack_top`, see `run_guest()` in vcpu.rs.
         "ldr x10, [x9]", // Get `host_stack_top` value from `&Aarch64VCpu.host_stack_top`.
         "mov sp, x10",   // Set `sp` as the host stack top.

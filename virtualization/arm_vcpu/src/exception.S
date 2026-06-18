@@ -1,6 +1,6 @@
 .macro SAVE_REGS_FROM_EL1
     # Curretly `sp` points to the address of `Aarch64VCpu.host_stack_top`.
-    sub     sp, sp, 36 * 8
+    sub     sp, sp, 39 * 8
     # Curretly `sp` points to the base address of `Aarch64VCpu.ctx`, which stores guest's `TrapFrame`.
 
     # Save general purpose registers into `Aarch64VCpu.ctx`
@@ -58,7 +58,7 @@
     ldp     x2, x3, [sp, 2 * 8]
     ldp     x0, x1, [sp]
     # Curretly `sp` points to the base address of `Aarch64VCpu.ctx`
-    add     sp, sp, 36 * 8
+    add     sp, sp, 39 * 8
      # Curretly `x0` points to the address of `Aarch64VCpu.host_stack_top`.
 .endm
 
@@ -138,7 +138,7 @@ exception_vector_base_vcpu:
 context_vm_entry:
     # Curretly `x0` points to the address of `Aarch64VCpu.host_stack_top`.
     mov     sp, x0
-    sub     sp, sp, 36 * 8
+    sub     sp, sp, 39 * 8
     # Curretly `sp` points to the base address of `Aarch64VCpu.ctx`, which stores guest's `TrapFrame`.
 .Lexception_return_el2:
     RESTORE_REGS_INTO_EL1

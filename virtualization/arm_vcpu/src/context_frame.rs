@@ -47,6 +47,15 @@ pub struct Aarch64ContextFrame {
     /// The fault address register (FAR_EL2), saved at each VM exit.
     ///   - Data Abort: the virtual address that caused the fault
     pub far_el2: u64,
+
+    /// Locked crash ESR_EL2 — captured on first crash-class exception (Data/Instruction Abort)
+    /// and NOT overwritten by subsequent VM exits (方案B).
+    /// Also captured as fallback by CrashFreezeGuest (方案D).
+    pub crash_esr_el2: u64,
+    /// Locked crash FAR_EL2 — captured together with `crash_esr_el2`.
+    pub crash_far_el2: u64,
+    /// Lock flag: once non-zero, `crash_esr_el2`/`crash_far_el2` are frozen.
+    pub crash_locked: u64,
 }
 
 /// Implementations of [`fmt::Display`] for [`Aarch64ContextFrame`].
@@ -63,6 +72,10 @@ impl core::fmt::Display for Aarch64ContextFrame {
         writeln!(f, "   sp_el0:  {:016x}", self.sp_el0)?;
         writeln!(f, "esr_el2:{:016x}", self.esr_el2)?;
         writeln!(f, "far_el2:{:016x}", self.far_el2)?;
+        if self.crash_locked != 0 {
+            writeln!(f, "crash_esr_el2:{:016x} (locked)", self.crash_esr_el2)?;
+            writeln!(f, "crash_far_el2:{:016x} (locked)", self.crash_far_el2)?;
+        }
         Ok(())
     }
 }
@@ -84,6 +97,9 @@ impl Default for Aarch64ContextFrame {
             sp_el0: 0,
             esr_el2: 0,
             far_el2: 0,
+            crash_esr_el2: 0,
+            crash_far_el2: 0,
+            crash_locked: 0,
         }
     }
 }
@@ -133,6 +149,34 @@ impl Aarch64ContextFrame {
             _ => {
                 panic!("Invalid general-purpose register index {index}")
             }
+        }
+    }
+
+    /// Capture the current ESR/FAR as crash registers if not already locked.
+    ///
+    /// Called by:
+    /// - `handle_exception_sync()` on Data/Instruction Abort (方案B)
+    /// - `CrashFreezeGuest` hypercall handler as fallback (方案D)
+    ///
+    /// Once locked (`crash_locked != 0`), subsequent calls are no-ops.
+    pub fn capture_crash_regs(&mut self) {
+        if self.crash_locked == 0 {
+            self.crash_esr_el2 = self.esr_el2;
+            self.crash_far_el2 = self.far_el2;
+            self.crash_locked = 1;
+            trace!("crash registers locked: esr={:#x}, far={:#x}", self.crash_esr_el2, self.crash_far_el2);
+        }
+    }
+
+    /// Returns the (ESR_EL2, FAR_EL2) pair.
+    ///
+    /// If crash registers are locked, returns the captured crash values;
+    /// otherwise returns the current (last VM exit) values.
+    pub fn crash_esr_far(&self) -> (u64, u64) {
+        if self.crash_locked != 0 {
+            (self.crash_esr_el2, self.crash_far_el2)
+        } else {
+            (self.esr_el2, self.far_el2)
         }
     }
 

@@ -315,6 +315,16 @@ impl HyperCall {
                     current_status
                 );
 
+                // 方案D: snapshot the current ctx ESR/FAR as crash registers.
+                // This serves as a fallback when 方案B didn't capture (e.g., watchdog timeout).
+                #[cfg(target_arch = "aarch64")]
+                for vcpu in target_vm.vcpu_list() {
+                    let arch_vcpu = vcpu.get_arch_vcpu();
+                    arch_vcpu.ctx.capture_crash_regs();
+                }
+                #[cfg(not(target_arch = "aarch64"))]
+                for _vcpu in target_vm.vcpu_list() {}
+
                 target_vm.set_vm_status(VMStatus::Suspended);
 
                 info!("VM[{}] frozen successfully, status=Suspended", target_vm_id);
@@ -394,20 +404,21 @@ pub struct CrashVcpuRegs {
 /// Read the CPU register state from a target vCPU.
 ///
 /// On AArch64 this reads the TrapFrame (gpr[31], sp_el0, elr, spsr),
-/// plus ESR_EL1 and FAR_EL1 via mrs from EL2.
-fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
-    use crate::vcpu::AxArchVCpuImpl;
+/// plus ESR_EL2 and FAR_EL2 from the locked crash registers (方案B + 方案D).
+fn read_vcpu_regs(_vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "aarch64")] {
+            use crate::vcpu::AxArchVCpuImpl;
             let arch_vcpu = vcpu.get_arch_vcpu();
 
             // Read ESR_EL2 and FAR_EL2 from the TrapFrame, which were saved
             // by exception.S at the moment of VM exit (the last exception).
-            // This is the ONLY reliable way to get the crash syndrome — the
-            // hardware registers ESR_EL2/FAR_EL2 would have been overwritten
-            // by subsequent VM exits (HVC #7/#8).
-            let esr = arch_vcpu.ctx.esr_el2;
-            let far = arch_vcpu.ctx.far_el2;
+            //
+            // However, since each VM exit overwrites esr_el2/far_el2 in the ctx,
+            // we use the locked crash registers instead. These are captured by:
+            //   方案B — the exception handler upon Data/Instruction Abort (first crash)
+            //   方案D — the CrashFreezeGuest handler (fallback snapshot)
+            let (esr, far) = arch_vcpu.ctx.crash_esr_far();
 
             // Classify crash type from ESR Exception Class
             let ec = (esr >> 26) & 0x3F;
