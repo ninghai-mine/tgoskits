@@ -1,0 +1,33 @@
+# QEMU arguments for axvisor with persistent vmcore storage.
+#
+# Uses a virtio-blk device backed by a disk image file.
+# Axvisor (ArceOS) mounts this as its root filesystem;
+# HVC #10 writes crash reports to /vmcore/ on this filesystem,
+# so they survive QEMU shutdown.
+#
+# Usage:
+#   cargo xtask axvisor qemu --arch aarch64 \
+#     --qemu-config vmcore-qemu.toml \
+#     --vmconfigs .../target-guest-memory.toml \
+#     --vmconfigs .../monitor-guest-memory.toml
+#
+# The disk image must be created beforehand:
+#   dd if=/dev/zero of=vmcore-persist.img bs=1M count=64
+#   mkfs.ext4 vmcore-persist.img
+
+args = [
+  "-nographic",
+  "-cpu", "cortex-a72",
+  "-machine", "virt,virtualization=on,gic-version=3",
+  "-smp", "4",
+  "-m", "8g",
+  # Block device backed by a persistent disk image.
+  "-device", "virtio-blk-device,drive=vmcore0",
+  "-drive", "id=vmcore0,if=none,format=raw,file=${workspace}/vmcore-persist.img",
+  # Kernel command line — ArceOS reads BLK=y to bring up the block device.
+  "-append", "BLK=y",
+]
+fail_regex = []
+success_regex = []
+to_bin = true
+uefi = false

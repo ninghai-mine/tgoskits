@@ -219,6 +219,7 @@ pub enum HyperCallCode {
     /// - `Ok(n)` on success, where `n` is the actual number of bytes read
     /// - `Err(_)` if the target VM is not found or the operation fails
     CrashReadGuestMem = 9,
+
     /// Poll whether a target VM has crashed.
     ///
     /// This hypercall is called by the Monitor Guest to check if a target VM
@@ -234,6 +235,28 @@ pub enum HyperCallCode {
     /// - `Ok(0)` if target VM is still running / not stopped
     /// - `Ok(1)` if target VM has stopped (crashed)
     PollCrashStatus = 10,
+
+    /// Save a file from a VM to the hypervisor's filesystem.
+    ///
+    /// This hypercall is called by the Monitor Guest to transfer crash dump
+    /// files (vmcore, analysis reports, memory dumps) to the hypervisor for
+    /// persistent storage. The hypervisor writes the data into `/vmcore/`.
+    ///
+    /// # Arguments (x0–x5)
+    ///
+    /// - `x0` = 11 (this code)
+    /// - `x1` = name_gpa  (GPA of a null‑terminated filename string in the
+    ///                     calling VM's address space)
+    /// - `x2` = data_gpa  (GPA of the file content buffer)
+    /// - `x3` = data_len  (number of bytes to save)
+    /// - `x4` = 0         (reserved)
+    /// - `x5` = 0         (reserved)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(0)`  on success
+    /// - `Err(_)` on failure (file too large, I/O error, …)
+    CrashSaveFile = 11,
 }
 
 /// Error type for invalid hypercall code conversion.
@@ -250,7 +273,6 @@ impl core::fmt::Display for InvalidHyperCallCode {
 }
 
 impl TryFrom<u32> for HyperCallCode {
-            10 => Ok(HyperCallCode::PollCrashStatus),
     type Error = InvalidHyperCallCode;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -265,6 +287,8 @@ impl TryFrom<u32> for HyperCallCode {
             7 => Ok(HyperCallCode::CrashFreezeGuest),
             8 => Ok(HyperCallCode::CrashReadGuestRegs),
             9 => Ok(HyperCallCode::CrashReadGuestMem),
+            10 => Ok(HyperCallCode::PollCrashStatus),
+            11 => Ok(HyperCallCode::CrashSaveFile),
             _ => Err(InvalidHyperCallCode(value)),
         }
     }
@@ -302,6 +326,9 @@ impl core::fmt::Debug for HyperCallCode {
             }
             HyperCallCode::CrashReadGuestMem => {
                 write!(f, "CrashReadGuestMem {:#x}", *self as u32)
+            }
+            HyperCallCode::CrashSaveFile => {
+                write!(f, "CrashSaveFile {:#x}", *self as u32)
             }
         }?;
         write!(f, ")")

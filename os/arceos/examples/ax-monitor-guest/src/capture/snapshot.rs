@@ -2,9 +2,11 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::format;
 
 
+use crate::capture::export;
 use crate::capture::register::{self, CrashVcpuRegs};
 use crate::capture::storage;
 use crate::capture::memory;
@@ -40,7 +42,7 @@ const KERNEL_ELF_PATH: &str = "";
 /// If the ELF has relative offsets (PIE), set this to PHYS_VIRT_OFFSET + kernel_load_addr.
 const KERNEL_BASE_ADDR: u64 = 0;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySegment {
     pub base_gpa: u64,
     pub size: usize,
@@ -115,7 +117,7 @@ pub fn capture_snapshot(event: CrashEvent) {
     let snapshot = CrashSnapshot {
         event,
         vcpu_regs,
-        memory_segments,
+        memory_segments: memory_segments.clone(),
     };
 
     ax_std::println!("[capture] snapshot captured");
@@ -181,15 +183,55 @@ pub fn capture_snapshot(event: CrashEvent) {
 
             // Step 5: Save analysis reports (with _analysis suffix to avoid overwriting vmcore).
             let report_base = alloc::format!("{}_analysis", vmcore_path.trim_end_matches(".json"));
-            match report::save_reports(&result, &report_base) {
-                Ok((json_path, md_path)) => {
+            let (json_path, md_path) = match report::save_reports(&result, &report_base) {
+                Ok(paths) => {
                     ax_std::println!("[recovery] analysis reports saved:");
-                    ax_std::println!("  JSON: {}", json_path);
-                    ax_std::println!("  MD:   {}", md_path);
+                    ax_std::println!("  JSON: {}", paths.0);
+                    ax_std::println!("  MD:   {}", paths.1);
+                    paths
                 }
                 Err(e) => {
                     ax_std::println!("[recovery] failed to save reports: {}", e);
+                    // Generate placeholder paths so downstream export still works
+                    (alloc::format!("{}.json", report_base), alloc::format!("{}.md", report_base))
                 }
+            };
+
+            // Step 6: Export all files to hypervisor storage via HVC #10.
+            // Re-read saved files and send them to the hypervisor.
+            let mut export_entries: Vec<(String, Vec<u8>)> = Vec::new();
+
+            // 6a — vmcore JSON
+            if let Ok(content) = ax_std::fs::read_to_string(&vmcore_path) {
+                let fname = vmcore_path.rsplit('/').next().unwrap_or("vmcore.json");
+                export_entries.push((fname.to_string(), content.into_bytes()));
+            }
+
+            // 6b — analysis reports (best-effort, skip if save_reports failed)
+            for path in [&json_path, &md_path] {
+                if let Ok(content) = ax_std::fs::read_to_string(path) {
+                    let fname = path.rsplit('/').next().unwrap_or("report");
+                    export_entries.push((fname.to_string(), content.into_bytes()));
+                }
+            }
+
+            // 6c — memory dump binaries
+            for seg in &memory_segments {
+                let mem_path = alloc::format!("/vmcore/{}", seg.path);
+                if let Ok(data) = ax_std::fs::read(&mem_path) {
+                    let fname = seg.path.rsplit('/').next().unwrap_or("memory.bin");
+                    export_entries.push((fname.to_string(), data));
+                }
+            }
+
+            if !export_entries.is_empty() {
+                let refs: Vec<(&str, &[u8])> = export_entries
+                    .iter()
+                    .map(|(n, d)| (n.as_str(), d.as_slice()))
+                    .collect();
+                export::export_files(&refs);
+            } else {
+                ax_std::println!("[export] no files to export");
             }
         } else {
             ax_std::println!("[recovery] failed to load vmcore for analysis");

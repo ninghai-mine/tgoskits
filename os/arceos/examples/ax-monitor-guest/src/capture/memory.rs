@@ -11,36 +11,12 @@ use alloc::vec::Vec;
 use alloc::format;
 
 
-#[cfg(target_arch = "aarch64")]
-use core::arch::asm;
-
 use ax_hal::mem::{virt_to_phys, VirtAddr};
+
+use super::hvc::hvc_call;
 
 /// Maximum bytes per single HVC #9 call (must match hypervisor side).
 const MAX_HVC_READ_SIZE: usize = 1024 * 1024; // 1 MB
-
-// ---------------------------------------------------------------------------
-// HVC call helper (same convention as register.rs)
-// ---------------------------------------------------------------------------
-
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-fn hvc_call(code: u64, x1: u64, x2: u64, x3: u64, x4: u64, x5: u64) -> u64 {
-    let result: u64;
-    unsafe {
-        asm!("hvc #0",
-             inout("x0") code => result,
-             in("x1") x1, in("x2") x2, in("x3") x3,
-             in("x4") x4, in("x5") x5,
-             options(nostack));
-    }
-    result
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-fn hvc_call(_code: u64, _x1: u64, _x2: u64, _x3: u64, _x4: u64, _x5: u64) -> u64 {
-    u64::MAX
-}
 
 // ---------------------------------------------------------------------------
 // Public API

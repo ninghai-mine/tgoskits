@@ -411,6 +411,56 @@ impl HyperCall {
                     }
                 }
             }
+            HyperCallCode::CrashSaveFile => {
+                let name_gpa = GuestPhysAddr::from_usize(self.args[0] as usize);
+                let data_gpa = GuestPhysAddr::from_usize(self.args[1] as usize);
+                let data_len = self.args[2] as usize;
+
+                info!(
+                    "VM[{}] HyperCall {:?} name_gpa={:#x} data_len={}",
+                    self.vm.id(),
+                    self.code,
+                    name_gpa.as_usize(),
+                    data_len,
+                );
+
+                #[cfg(feature = "host-fs")]
+                {
+                    // Read null-terminated filename from the calling VM.
+                    let mut name_buf = [0u8; 256];
+                    let n = self.vm.read_guest_bytes(name_gpa, &mut name_buf)?;
+                    let end = name_buf.iter().position(|&b| b == 0).unwrap_or(n.min(255));
+                    let filename = core::str::from_utf8(&name_buf[..end])
+                        .map_err(|_| ax_err_type!(InvalidInput, "invalid UTF-8 filename"))?;
+
+                    // Reject path separators — we write into a fixed directory.
+                    if filename.contains('/') || filename.contains('\\') {
+                        return Err(ax_err_type!(InvalidInput, "path separator in filename"));
+                    }
+
+                    // Read file data from the calling VM.
+                    let mut data = alloc::vec![0u8; data_len];
+                    self.vm.read_guest_bytes(data_gpa, &mut data)?;
+
+                    // Write to the hypervisor's filesystem.
+                    let _ = ax_std::fs::create_dir("/vmcore");
+                    let path = alloc::format!("/vmcore/{}", filename);
+                    ax_std::fs::write(&path, &data)
+                        .map_err(|e| ax_err_type!(Io, format!("write '{}': {:?}", path, e)))?;
+
+                    info!("CrashSaveFile: written '{}' ({} bytes)", path, data_len);
+                }
+
+                #[cfg(not(feature = "host-fs"))]
+                {
+                    warn!(
+                        "CrashSaveFile ignored — axvisor built without 'host-fs' feature; \
+                         files remain in guest ramfs"
+                    );
+                }
+
+                Ok(0)
+            }
             _ => {
                 warn!("Unsupported hypercall code: {:?}", self.code);
                 ax_err!(Unsupported)?
