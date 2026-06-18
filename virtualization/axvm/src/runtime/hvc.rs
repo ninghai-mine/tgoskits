@@ -438,10 +438,9 @@ pub struct CrashVcpuRegs {
 ///
 /// On AArch64 this reads the TrapFrame (gpr[31], sp_el0, elr, spsr),
 /// plus ESR_EL2 and FAR_EL2 from the locked crash registers (方案B + 方案D).
-fn read_vcpu_regs(_vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
+fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "aarch64")] {
-            use crate::vcpu::AxArchVCpuImpl;
             let arch_vcpu = vcpu.get_arch_vcpu();
 
             // Read ESR_EL2 and FAR_EL2 from the TrapFrame, which were saved

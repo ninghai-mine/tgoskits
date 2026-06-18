@@ -5,9 +5,6 @@
 //! hypervisor's Stage-2 page tables.
 
 extern crate alloc;
-use alloc::vec::Vec;
-use alloc::string::String;
-use alloc::format;
 
 #[cfg(target_arch = "aarch64")]
 use core::arch::asm;

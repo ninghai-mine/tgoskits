@@ -1,10 +1,9 @@
 extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
-use alloc::string::String;
 use crate::capture::register::{self, CrashVcpuRegs};
-use crate::capture::memory;
 use crate::capture::storage;
+use crate::capture::memory;
 use crate::monitor::event::CrashEvent;
 use crate::recovery::analyzer;
 use crate::recovery::report;
