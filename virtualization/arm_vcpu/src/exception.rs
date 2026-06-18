@@ -85,7 +85,6 @@ core::arch::global_asm!(
 pub fn handle_exception_sync(ctx: &mut TrapFrame) -> AxResult<AxVCpuExitReason> {
     match exception_class() {
         Some(ESR_EL2::EC::Value::DataAbortLowerEL) => {
-            ctx.capture_crash_regs();
             let elr = ctx.exception_pc();
             let val = elr + exception_next_instruction_step();
             ctx.set_exception_pc(val);
@@ -165,6 +164,7 @@ fn handle_data_abort(context_frame: &mut TrapFrame) -> AxResult<AxVCpuExitReason
     };
 
     if !exception_data_abort_handleable() {
+        context_frame.capture_crash_regs();
         panic!(
             "Core data abort not handleable {:#x}, esr {:#x}",
             addr,
@@ -174,8 +174,10 @@ fn handle_data_abort(context_frame: &mut TrapFrame) -> AxResult<AxVCpuExitReason
 
     if !exception_data_abort_is_translate_fault() {
         if exception_data_abort_is_permission_fault() {
+            context_frame.capture_crash_regs();
             return Err(AxError::Unsupported);
         } else {
+            context_frame.capture_crash_regs();
             panic!("Core data abort is not translate fault {:#x}", addr,);
         }
     }
