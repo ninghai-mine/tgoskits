@@ -443,10 +443,15 @@ fn read_vcpu_regs(vcpu: &crate::AxVCpuRef) -> CrashVcpuRegs {
         if #[cfg(target_arch = "aarch64")] {
             let arch_vcpu = vcpu.get_arch_vcpu();
 
-            // Read ESR_EL2 and FAR_EL2 from the TrapFrame, which were saved
-            // by exception.S at the moment of VM exit (the last exception).
+            // Read ESR_EL1 and FAR_EL1 from the TrapFrame, which were saved
+            // by exception.S at the moment of VM exit.
             //
-            // However, since each VM exit overwrites esr_el2/far_el2 in the ctx,
+            // NOTE: The assembly saves ESR_EL1/FAR_EL1 (the Guest's original
+            // exception registers) into the esr_el2/far_el2 struct fields.
+            // We use ESR_EL1 because it retains its value across the EL2 trap,
+            // while ESR_EL2 is overwritten on every VM exit. See exception.S.
+            //
+            // However, since subsequent VM exits can overwrite these fields,
             // we use the locked crash registers instead. These are captured by:
             //   方案B — the exception handler upon Data/Instruction Abort (first crash)
             //   方案D — the CrashFreezeGuest handler (fallback snapshot)
