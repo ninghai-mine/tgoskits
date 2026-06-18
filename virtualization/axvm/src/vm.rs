@@ -883,6 +883,59 @@ impl AxVM {
         }
     }
 
+    /// Reads raw bytes from guest physical memory into the provided buffer.
+    pub fn read_guest_bytes(&self, gpa: GuestPhysAddr, buf: &mut [u8]) -> AxResult {
+        let size = buf.len();
+        if size == 0 {
+            return Ok(());
+        }
+        let g = self.inner_mut.lock();
+        match g.address_space.translated_byte_buffer(gpa, size) {
+            Some(chunks) => {
+                let mut offset = 0;
+                for chunk in &chunks {
+                    let remaining = size - offset;
+                    let copy_len = remaining.min(chunk.len());
+                    buf[offset..offset + copy_len].copy_from_slice(&chunk[..copy_len]);
+                    offset += copy_len;
+                    if offset >= size {
+                        break;
+                    }
+                }
+                if offset < size {
+                    return ax_err!(InvalidInput, "Insufficient data in guest memory");
+                }
+                Ok(())
+            }
+            None => ax_err!(InvalidInput, "Failed to translate guest physical address"),
+        }
+    }
+
+    /// Writes raw bytes from the provided buffer into guest physical memory.
+    pub fn write_guest_bytes(&self, gpa: GuestPhysAddr, buf: &[u8]) -> AxResult {
+        let size = buf.len();
+        if size == 0 {
+            return Ok(());
+        }
+        let mut g = self.inner_mut.lock();
+        match g.address_space.translated_byte_buffer(gpa, size) {
+            Some(mut chunks) => {
+                let mut offset = 0;
+                for chunk in chunks.iter_mut() {
+                    let remaining = size - offset;
+                    let copy_len = remaining.min(chunk.len());
+                    chunk[..copy_len].copy_from_slice(&buf[offset..offset + copy_len]);
+                    offset += copy_len;
+                    if offset >= size {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            None => ax_err!(InvalidInput, "Failed to translate guest physical address"),
+        }
+    }
+
     /// Allocates an IVC channel for inter-VM communication region.
     ///
     /// ## Arguments

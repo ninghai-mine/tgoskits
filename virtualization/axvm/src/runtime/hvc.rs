@@ -361,6 +361,35 @@ impl HyperCall {
                 );
                 Ok(0)
             }
+            HyperCallCode::CrashReadGuestMem => {
+                let target_vm_id = self.args[0] as usize;
+                let src_gpa = GuestPhysAddr::from_usize(self.args[1] as usize);
+                let size = self.args[2] as usize;
+                let dest_gpa = GuestPhysAddr::from_usize(self.args[3] as usize);
+
+                // Cap size to 4K (one page) per call to keep it simple.
+                let size = size.min(4096);
+
+                info!(
+                    "VM[{}] HyperCall {:?} target VM[{}] src_gpa={:#x} size={} dest_gpa={:#x}",
+                    self.vm.id(), self.code, target_vm_id, src_gpa, size, dest_gpa
+                );
+
+                let target_vm = manager::get_vm_by_id(target_vm_id).ok_or_else(|| {
+                    ax_err_type!(NotFound, format!("target VM[{}] not found", target_vm_id))
+                })?;
+
+                // Read from target VM's memory and write to calling VM's memory.
+                let mut buf = alloc::vec![0u8; size];
+                target_vm.read_guest_bytes(src_gpa, &mut buf)?;
+                self.vm.write_guest_bytes(dest_gpa, &buf)?;
+
+                info!(
+                    "VM[{}] read {} bytes from VM[{}] GPA {:#x}",
+                    self.vm.id(), size, target_vm_id, src_gpa
+                );
+                Ok(0)
+            }
             _ => {
                 warn!("Unsupported hypercall code: {:?}", self.code);
                 ax_err!(Unsupported)?

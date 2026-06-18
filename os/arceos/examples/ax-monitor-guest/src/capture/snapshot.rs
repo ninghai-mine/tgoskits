@@ -1,6 +1,7 @@
 extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
+use crate::capture::memory::{self, MemRegion};
 use crate::capture::register::{self, CrashVcpuRegs};
 use crate::capture::storage;
 use crate::monitor::event::CrashEvent;
@@ -48,7 +49,17 @@ pub fn capture_snapshot(event: CrashEvent) {
 
     ax_std::println!("[capture] snapshot captured");
 
-    // Step 2: Save vmcore to persistent storage.
+    // Step 2: Dump target VM memory via HVC #9 (best-effort, may fail).
+    match memory::dump_target_memory(TARGET_VM_ID) {
+        Ok((_regions, data)) => {
+            ax_std::println!("[capture] memory dump: {} bytes", data.len());
+        }
+        Err(e) => {
+            ax_std::println!("[capture] memory dump skipped: {}", e);
+        }
+    }
+
+    // Step 3: Save vmcore to persistent storage.
     if let Ok(vmcore_path) = storage::save_vmcore(&snapshot) {
         ax_std::println!("[capture] vmcore saved at: {}", vmcore_path);
 

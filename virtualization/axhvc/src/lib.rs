@@ -197,6 +197,20 @@ pub enum HyperCallCode {
     /// state of a specific vCPU in a crashed VM. The register data is written
     /// directly into the calling VM's guest physical memory.
     CrashReadGuestRegs = 8,
+
+    /// Read a chunk of guest physical memory from a target VM.
+    ///
+    /// This hypercall is called by the Monitor Guest to read raw memory from
+    /// a crashed target VM. The memory content is written directly into the
+    /// calling VM's guest physical memory at the provided destination address.
+    ///
+    /// # Arguments (in x1..x5)
+    ///
+    /// - `x1` = target_vm_id
+    /// - `x2` = src_gpa (guest physical address in the target VM to read from)
+    /// - `x3` = size   (number of bytes to read, max 1 page / 4096)
+    /// - `x4` = dest_gpa (guest physical address in the calling VM to write to)
+    CrashReadGuestMem = 9,
 }
 
 /// Error type for invalid hypercall code conversion.
