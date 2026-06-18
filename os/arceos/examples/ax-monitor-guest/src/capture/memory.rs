@@ -3,8 +3,12 @@
 //! Uses `ax_hal::mem::virt_to_phys` for correct VA → GPA translation,
 //! as the destination buffer must be a physical address visible to the
 //! hypervisor's Stage-2 page tables.
+
 extern crate alloc;
 
+use alloc::string::String;
+use alloc::vec::Vec;
+use alloc::format;
 
 
 #[cfg(target_arch = "aarch64")]

@@ -1,6 +1,5 @@
 extern crate alloc;
 use alloc::vec;
-use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::format;
@@ -20,7 +19,7 @@ const TARGET_VCPU_COUNT: u64 = 1;
 
 /// Guest physical memory regions to dump (must match target-guest-memory.toml).
 const MEMORY_REGIONS: &[(u64, usize)] = &[
-    (0x8020_0000, 0x0010_0000), // 8 MB of Guest RAM
+    (0x8000_0000, 0x0800_0000), // 8 MB of Guest RAM
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
