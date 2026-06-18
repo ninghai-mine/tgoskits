@@ -60,25 +60,6 @@ pub fn read_vcpu_regs(target_vm_id: u64, target_vcpu_id: u64) -> Result<CrashVcp
     Ok(regs)
 }
 
-/// Read a chunk of guest physical memory from the target VM via HVC #9.
-///
-/// `dest_buf` is a mutable byte slice; its GPA will be calculated and passed
-/// to the hypervisor so it can write the target VM's memory directly into it.
-pub fn read_guest_mem(target_vm_id: u64, src_gpa: u64, dest_buf: &mut [u8]) -> Result<(), String> {
-    let size = dest_buf.len();
-    if size == 0 || size > 4096 {
-        return Err(format!("read_guest_mem: size {} out of range (1..4096)", size));
-    }
-    let buf_addr = dest_buf.as_ptr() as usize;
-    let vaddr = VirtAddr::from_usize(buf_addr);
-    let gpa = virt_to_phys(vaddr).as_usize();
-    let ret = hvc_call(9, target_vm_id, src_gpa, size as u64, gpa as u64, 0);
-    if ret != 0 {
-        return Err(format!("CrashReadGuestMem failed on VM[{}] GPA {:#x}, ret={}", target_vm_id, src_gpa, ret));
-    }
-    Ok(())
-}
-
 pub fn freeze_and_read_all(target_vm_id: u64, vcpu_count: u64) -> Result<Vec<(u64, CrashVcpuRegs)>, String> {
     freeze_target(target_vm_id)?;
     let mut results = Vec::new();

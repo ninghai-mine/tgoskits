@@ -324,7 +324,7 @@ fn current_el_sync_handler(tf: &mut TrapFrame) {
 /// 1. **Restore Previous Host Stack pointor:**
 ///     - The guest context frame is aleady saved by `SAVE_REGS_FROM_EL1` macro in exception.S.
 ///       This function firstly adjusts the `sp` to skip the exception frame
-///       (adding `36 * 8` to the stack pointer) according to the memory layout of `Aarch64VCpu` struct,
+///       (adding `39 * 8` to the stack pointer) according to the memory layout of `Aarch64VCpu` struct,
 ///       which makes current `sp` point to the address of `host_stack_top`.
 ///       The host stack top value is restored by `ldr`.
 ///

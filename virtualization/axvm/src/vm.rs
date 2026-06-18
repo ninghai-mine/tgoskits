@@ -907,7 +907,6 @@ impl AxVM {
                 }
                 Ok(copied)
             }
-            }
             None => ax_err!(InvalidInput, "Failed to translate guest physical address"),
         }
     }
@@ -935,7 +934,6 @@ impl AxVM {
                     }
                 }
                 Ok(copied)
-            }
             }
             None => ax_err!(InvalidInput, "Failed to translate guest physical address"),
         }
