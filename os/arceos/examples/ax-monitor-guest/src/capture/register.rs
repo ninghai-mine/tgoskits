@@ -60,6 +60,13 @@ pub fn read_vcpu_regs(target_vm_id: u64, target_vcpu_id: u64) -> Result<CrashVcp
     Ok(regs)
 }
 
+/// Poll whether a target VM has crashed via HVC #10 PollCrashStatus.
+/// Returns `true` if the target VM is stopped (crashed).
+pub fn poll_crash_status(target_vm_id: u64) -> bool {
+    let ret = hvc_call(10, target_vm_id, 0, 0, 0, 0);
+    ret == 1
+}
+
 pub fn freeze_and_read_all(target_vm_id: u64, vcpu_count: u64) -> Result<Vec<(u64, CrashVcpuRegs)>, String> {
     freeze_target(target_vm_id)?;
     let mut results = Vec::new();

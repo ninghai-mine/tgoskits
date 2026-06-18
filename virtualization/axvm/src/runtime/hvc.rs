@@ -394,6 +394,23 @@ impl HyperCall {
                 );
                 Ok(written)
             }
+            HyperCallCode::PollCrashStatus => {
+                let target_vm_id = self.args[0] as usize;
+                let target_vm = manager::get_vm_by_id(target_vm_id).ok_or_else(|| {
+                    ax_err_type!(NotFound, format!("target VM[{}] not found", target_vm_id))
+                })?;
+                let status = target_vm.vm_status();
+                match status {
+                    VMStatus::Stopped => {
+                        info!("VM[{}] HyperCall PollCrashStatus: target VM[{}] has crashed (Stopped)", self.vm.id(), target_vm_id);
+                        Ok(1)
+                    }
+                    _ => {
+                        trace!("VM[{}] HyperCall PollCrashStatus: target VM[{}] status={:?}", self.vm.id(), target_vm_id, status);
+                        Ok(0)
+                    }
+                }
+            }
             _ => {
                 warn!("Unsupported hypercall code: {:?}", self.code);
                 ax_err!(Unsupported)?

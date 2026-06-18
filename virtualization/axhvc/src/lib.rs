@@ -219,6 +219,21 @@ pub enum HyperCallCode {
     /// - `Ok(n)` on success, where `n` is the actual number of bytes read
     /// - `Err(_)` if the target VM is not found or the operation fails
     CrashReadGuestMem = 9,
+    /// Poll whether a target VM has crashed.
+    ///
+    /// This hypercall is called by the Monitor Guest to check if a target VM
+    /// has exited (status == Stopped). It allows polling-based crash detection
+    /// without hardcoded timing.
+    ///
+    /// # Arguments (in x1)
+    ///
+    /// - `x1` = target_vm_id
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(0)` if target VM is still running / not stopped
+    /// - `Ok(1)` if target VM has stopped (crashed)
+    PollCrashStatus = 10,
 }
 
 /// Error type for invalid hypercall code conversion.
@@ -235,6 +250,7 @@ impl core::fmt::Display for InvalidHyperCallCode {
 }
 
 impl TryFrom<u32> for HyperCallCode {
+            10 => Ok(HyperCallCode::PollCrashStatus),
     type Error = InvalidHyperCallCode;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -268,6 +284,9 @@ impl core::fmt::Debug for HyperCallCode {
             }
             HyperCallCode::HIVCSubscribChannel => {
                 write!(f, "HIVCSubscribChannel {:#x}", *self as u32)
+            }
+            HyperCallCode::PollCrashStatus => {
+                write!(f, "PollCrashStatus {:#x}", *self as u32)
             }
             HyperCallCode::HIVCUnPublishChannel => {
                 write!(f, "HIVCUnPublishChannel {:#x}", *self as u32)

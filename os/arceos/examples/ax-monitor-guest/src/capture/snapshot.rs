@@ -19,8 +19,9 @@ const TARGET_VM_ID: u64 = 1;
 const TARGET_VCPU_COUNT: u64 = 1;
 
 /// Guest physical memory regions to dump (must match target-guest-memory.toml).
+/// Kernel image is at 0x8020_0000 (2 MiB), dump 1 MiB around it.
 const MEMORY_REGIONS: &[(u64, usize)] = &[
-    (0x8000_0000, 0x0800_0000), // 8 MB of Guest RAM
+    (0x8020_0000, 0x0010_0000), // 1 MiB kernel image area
 ];
 
 /// Guest kernel linear mapping offset (GVA → GPA).
