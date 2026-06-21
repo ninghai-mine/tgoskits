@@ -71,6 +71,12 @@ impl SymbolTable {
         }
     }
 
+    /// Look up a symbol by name (linear scan).
+    /// Returns the first symbol whose name matches.
+    pub fn lookup_name(&self, name: &str) -> Option<&SymbolInfo> {
+        self.symbols.iter().find(|s| s.name == name)
+    }
+
     pub fn len(&self) -> usize { self.symbols.len() }
     pub fn is_empty(&self) -> bool { self.symbols.is_empty() }
 }

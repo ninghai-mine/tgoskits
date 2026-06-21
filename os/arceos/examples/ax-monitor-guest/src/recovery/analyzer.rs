@@ -71,7 +71,7 @@ pub fn analyze(
 
     // Step 2 — Identify the crashing process.
     let process = primary_vcpu
-        .map(|regs| crate::recovery::process::identify(regs, &backtrace, sym))
+        .map(|regs| crate::recovery::process::identify(regs, &backtrace, sym, mem))
         .unwrap_or(ProcessInfo {
             pid: None,
             name: "<unknown>".into(),
