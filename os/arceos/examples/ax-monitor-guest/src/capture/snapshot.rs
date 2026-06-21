@@ -7,6 +7,7 @@ use alloc::format;
 
 
 use crate::capture::export;
+use crate::capture::log;
 use crate::capture::modules;
 use crate::capture::register::{self, CrashVcpuRegs};
 use crate::capture::storage;
@@ -57,6 +58,8 @@ pub struct CrashSnapshot {
     pub vcpu_regs: Vec<(u64, CrashVcpuRegs)>,
     /// Optional memory dump segments.
     pub memory_segments: Vec<MemorySegment>,
+    /// Kernel log buffer text, if capture succeeded.
+    pub kernel_log: Option<String>,
     /// Loaded kernel module information.
     pub modules: Vec<modules::ModuleInfo>,
 }
@@ -66,7 +69,7 @@ pub fn capture_snapshot(event: CrashEvent) {
     ax_std::println!("[capture] start snapshot (event={:?})", event);
 
     // Ensure /vmcore/ directory exists for memory dump files.
-    let _ = ax_std::fs::create_dir_all("/vmcore");
+    let _ = ax_std::fs::create_dir("/vmcore");
 
     // Step 1: Freeze the target VM and read all vCPU registers via HVC.
     let vcpu_regs = match register::freeze_and_read_all(TARGET_VM_ID, TARGET_VCPU_COUNT) {
@@ -119,8 +122,19 @@ pub fn capture_snapshot(event: CrashEvent) {
             Vec::new()
         }
     };
+    // Step 3: Collect kernel log buffer.
+    let kernel_log = match log::collect_kernel_log(TARGET_VM_ID, None, 64 * 1024) {
+        Ok(result) => {
+            ax_std::println!("[capture] kernel log collected: {} chars", result.raw_text.len());
+            Some(result.raw_text)
+        }
+        Err(e) => {
+            ax_std::println!("[capture] kernel log skipped: {}", e);
+            None
+        }
+    };
 
-    // Step 3: Collect loaded kernel module information via HVC #9.
+    // Step 4: Collect loaded kernel module information via HVC #9.
     let modules = modules::collect_modules(TARGET_VM_ID, None);
     ax_std::println!(
         "[capture] modules: {} found (method: {})",
@@ -132,9 +146,9 @@ pub fn capture_snapshot(event: CrashEvent) {
     }
 
     let snapshot = CrashSnapshot {
-        event,
         vcpu_regs,
         memory_segments: memory_segments.clone(),
+        kernel_log,
         modules: modules.modules,
     };
 
