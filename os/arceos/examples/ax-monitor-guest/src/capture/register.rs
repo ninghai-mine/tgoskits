@@ -46,6 +46,25 @@ pub fn read_vcpu_regs(target_vm_id: u64, target_vcpu_id: u64) -> Result<CrashVcp
     Ok(regs)
 }
 
+/// Read a chunk of guest physical memory from a frozen target VM via HVC #9 CrashReadGuestMem.
+pub fn read_guest_mem(target_vm_id: u64, target_gpa: u64, buffer: &mut [u8]) -> Result<usize, String> {
+    let size = buffer.len();
+    if size == 0 {
+        return Ok(0);
+    }
+    // Translate buffer VA to GPA so the hypervisor can write into it.
+    let buf_addr = buffer.as_ptr() as usize;
+    let vaddr = VirtAddr::from_usize(buf_addr);
+    let buf_gpa = virt_to_phys(vaddr).as_usize() as u64;
+    let ret = hvc_call(9, target_vm_id, target_gpa, buf_gpa, size as u64, 0);
+    if (ret as i64) < 0 {
+        Err(format!("CrashReadGuestMem failed on VM[{}] GPA={:#x} size={} ret={}",
+                     target_vm_id, target_gpa, size, ret))
+    } else {
+        Ok(ret as usize)
+    }
+}
+
 /// Poll whether a target VM has crashed via HVC #10 PollCrashStatus.
 /// Returns `true` if the target VM is stopped (crashed).
 pub fn poll_crash_status(target_vm_id: u64) -> bool {
