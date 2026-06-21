@@ -146,6 +146,7 @@ pub fn capture_snapshot(event: CrashEvent) {
     }
 
     let snapshot = CrashSnapshot {
+        event,
         vcpu_regs,
         memory_segments: memory_segments.clone(),
         kernel_log,
