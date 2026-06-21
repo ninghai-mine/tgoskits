@@ -7,6 +7,7 @@ use alloc::format;
 
 
 use crate::capture::export;
+use crate::capture::modules;
 use crate::capture::register::{self, CrashVcpuRegs};
 use crate::capture::storage;
 use crate::capture::memory;
@@ -56,6 +57,8 @@ pub struct CrashSnapshot {
     pub vcpu_regs: Vec<(u64, CrashVcpuRegs)>,
     /// Optional memory dump segments.
     pub memory_segments: Vec<MemorySegment>,
+    /// Loaded kernel module information.
+    pub modules: Vec<modules::ModuleInfo>,
 }
 
 pub fn capture_snapshot(event: CrashEvent) {
@@ -117,10 +120,22 @@ pub fn capture_snapshot(event: CrashEvent) {
         }
     };
 
+    // Step 3: Collect loaded kernel module information via HVC #9.
+    let modules = modules::collect_modules(TARGET_VM_ID, None);
+    ax_std::println!(
+        "[capture] modules: {} found (method: {})",
+        modules.modules.len(),
+        modules.method,
+    );
+    for m in &modules.modules {
+        ax_std::println!("  module: {} @ {:#x} ({} bytes)", m.name, m.base_addr, m.size);
+    }
+
     let snapshot = CrashSnapshot {
         event,
         vcpu_regs,
         memory_segments: memory_segments.clone(),
+        modules: modules.modules,
     };
 
     ax_std::println!("[capture] snapshot captured");
