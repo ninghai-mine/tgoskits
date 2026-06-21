@@ -1,5 +1,5 @@
 //! Export crash dump files from the monitor guest to the hypervisor's
-//! storage via HVC #10 (CrashSaveFile).
+//! storage via HVC #11 (CrashSaveFile).
 //!
 //! After a crash snapshot is captured and analysed, this module sends
 //! the vmcore JSON, analysis reports, and memory dumps to the hypervisor,
@@ -9,7 +9,6 @@
 extern crate alloc;
 use alloc::format;
 use alloc::string::String;
-use alloc::string::ToString;
 
 use ax_hal::mem::{virt_to_phys, VirtAddr};
 

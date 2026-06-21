@@ -23,7 +23,7 @@
 
 extern crate alloc;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
@@ -73,9 +73,7 @@ const MAX_MODULE_SIZE: u64 = 32 * 1024 * 1024;
 /// Maximum number of modules to collect (safety limit).
 const MAX_MODULES: usize = 64;
 
-/// Kernel-image GPA bounds used to distinguish built-in symbols from
-/// dynamically loaded modules.  These must match the target VM config.
-const KERNEL_IMAGE_GPA_START: u64 = 0x8020_0000;
+/// End of the kernel image GPA — modules are typically loaded after this.
 const KERNEL_IMAGE_GPA_END: u64 = 0x8030_0000;
 
 // ---------------------------------------------------------------------------
@@ -297,11 +295,11 @@ fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
         }
     }
 
-    // If we didn't find a name via .modinfo, try to use the first section
-    // that has an allocated virtual address as a hint (e.g., `.text`).
-    let base_addr = elf_gpa;  // we found it in physical space – report the GPA
+    // Compute the module extent from the highest section end address.
+    // `elf_gpa` is already a GPA (found by ELF magic scan in physical memory),
+    // so we subtract it directly without an extra gva_to_gpa call.
     let size = if module_end > 0 {
-        (module_end - gva_to_gpa(elf_gpa)) as usize
+        (module_end - elf_gpa) as usize
     } else {
         0
     };
@@ -310,6 +308,10 @@ fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
         // Fallback: generate a name from the GPA.
         format!("module_{:#x}", elf_gpa)
     });
+
+    // The module base address is its GPA (we found it in guest physical memory).
+    // If a kernel virtual address is needed, call gva_to_gpa on this value.
+    let base_addr = elf_gpa;
 
     // Sanity-check the size.
     if size >= MIN_MODULE_SIZE as usize && size <= MAX_MODULE_SIZE as usize {
