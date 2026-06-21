@@ -96,15 +96,15 @@ const KERNEL_IMAGE_GPA_END: u64 = 0x8030_0000;
 /// `ModulesResult` containing the module list and a description of how it
 /// was obtained.  The list may be empty if the kernel has no loaded modules
 /// or if the memory could not be read.
-pub fn collect_modules(target_vm_id: u64, head_gpa: Option<u64>) -> ModulesResult {
+pub fn collect_modules(target_vm_id: u64, head_gpa: Option<u64>) -> Result<ModulesResult, String> {
     // ── Strategy A: explicit head address −────────────
     if let Some(gpa) = head_gpa {
         match read_kallsyms(target_vm_id, gpa) {
             Ok(modules) if !modules.is_empty() => {
-                return ModulesResult {
+                    return Ok(ModulesResult {
                     modules,
                     method: "kallsyms (explicit address)".into(),
-                };
+                });
             }
             _ => {} // fall through
         }
@@ -135,7 +135,7 @@ pub fn collect_modules(target_vm_id: u64, head_gpa: Option<u64>) -> ModulesResul
         method = "no modules found (kernel may have no dynamic modules)".into();
     }
 
-    ModulesResult { modules, method }
+    Ok(ModulesResult { modules, method })
 }
 
 // ---------------------------------------------------------------------------

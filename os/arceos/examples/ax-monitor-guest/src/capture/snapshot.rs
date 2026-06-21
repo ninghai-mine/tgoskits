@@ -135,22 +135,30 @@ pub fn capture_snapshot(event: CrashEvent) {
     };
 
     // Step 4: Collect loaded kernel module information via HVC #9.
-    let modules = modules::collect_modules(TARGET_VM_ID, None);
-    ax_std::println!(
-        "[capture] modules: {} found (method: {})",
-        modules.modules.len(),
-        modules.method,
-    );
-    for m in &modules.modules {
-        ax_std::println!("  module: {} @ {:#x} ({} bytes)", m.name, m.base_addr, m.size);
-    }
+    let modules = match modules::collect_modules(TARGET_VM_ID, None) {
+        Ok(result) => {
+            ax_std::println!(
+                "[capture] modules: {} found (method: {})",
+                result.modules.len(),
+                result.method,
+            );
+            for m in &result.modules {
+                ax_std::println!("  module: {} @ {:#x} ({} bytes)", m.name, m.base_addr, m.size);
+            }
+            result.modules
+        }
+        Err(e) => {
+            ax_std::println!("[capture] modules skipped: {}", e);
+            Vec::new()
+        }
+    };
 
     let snapshot = CrashSnapshot {
         event,
         vcpu_regs,
         memory_segments: memory_segments.clone(),
         kernel_log,
-        modules: modules.modules,
+        modules,
     };
 
     ax_std::println!("[capture] snapshot captured");
