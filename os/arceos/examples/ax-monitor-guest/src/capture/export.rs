@@ -19,7 +19,7 @@ use super::hvc::hvc_call;
 /// The hypervisor side is expected to handle reasonable sizes.
 const MAX_EXPORT_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 
-/// Save a file to the hypervisor's `/vmcore/` directory via HVC #10.
+/// Save a file to the hypervisor's `/vmcore/` directory via HVC #11 CrashSaveFile.
 ///
 /// # Arguments
 ///
@@ -54,7 +54,7 @@ pub fn save_file_to_hypervisor(filename: &str, data: &[u8]) -> Result<(), String
         virt_to_phys(VirtAddr::from_usize(data.as_ptr() as usize)).as_usize() as u64;
     let data_len = data.len() as u64;
 
-    let ret = hvc_call(10, name_gpa, data_gpa, data_len, 0, 0);
+    let ret = hvc_call(11, name_gpa, data_gpa, data_len, 0, 0);
     if (ret as i64) < 0 {
         Err(format!("CrashSaveFile failed for '{}', ret={}", filename, ret))
     } else {

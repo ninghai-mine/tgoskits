@@ -62,6 +62,9 @@ pub fn capture_snapshot(event: CrashEvent) {
     let timestamp = boot_timestamp();
     ax_std::println!("[capture] start snapshot (event={:?})", event);
 
+    // Ensure /vmcore/ directory exists for memory dump files.
+    let _ = ax_std::fs::create_dir_all("/vmcore");
+
     // Step 1: Freeze the target VM and read all vCPU registers via HVC.
     let vcpu_regs = match register::freeze_and_read_all(TARGET_VM_ID, TARGET_VCPU_COUNT) {
         Ok(regs) => {
