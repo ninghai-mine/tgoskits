@@ -461,6 +461,44 @@ impl HyperCall {
 
                 Ok(0)
             }
+            HyperCallCode::ConsoleGetChar => {
+                // Read a character from the PL011 UART on behalf of the
+                // calling VM.  We poll the Flag Register until data is
+                // available, then return the byte from the Data Register.
+                // The base address matches QEMU virt's UART0 (0x900_0000);
+                // adjust for other platforms.
+                const PL011_BASE: u64 = 0x900_0000;
+                const PL011_DR:  u64 = 0x000;
+                const PL011_FR:  u64 = 0x018;
+                const FR_RXFE: u32 = 1 << 4; // RX FIFO Empty
+
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let fr_ptr = (PL011_BASE + PL011_FR) as *const u32;
+                    let dr_ptr = (PL011_BASE + PL011_DR) as *const u32;
+
+                    // Poll with a small timeout so we don't hang forever
+                    // if no input is available.
+                    for _ in 0..10_000 {
+                        let fr = unsafe { core::ptr::read_volatile(fr_ptr) };
+                        if fr & FR_RXFE == 0 {
+                            let dr = unsafe { core::ptr::read_volatile(dr_ptr) };
+                            let ch = (dr & 0xFF) as u8;
+                            trace!("ConsoleGetChar returned '{}' ({:#x})", ch as char, ch);
+                            return Ok(ch as usize);
+                        }
+                        core::hint::spin_loop();
+                    }
+                    // No data available after timeout.
+                    Ok(0)
+                }
+
+                #[cfg(not(target_arch = "aarch64"))]
+                {
+                    warn!("ConsoleGetChar not implemented for this architecture");
+                    Ok(0)
+                }
+            }
             _ => {
                 warn!("Unsupported hypercall code: {:?}", self.code);
                 ax_err!(Unsupported)?

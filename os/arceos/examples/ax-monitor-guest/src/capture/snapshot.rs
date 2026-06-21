@@ -15,6 +15,7 @@ use crate::capture::memory;
 use crate::monitor::event::CrashEvent;
 use crate::recovery::analyzer;
 use crate::recovery::report;
+use crate::recovery::console;
 use crate::recovery::symbol::SymbolTable;
 use serde::{Deserialize, Serialize};
 
@@ -274,6 +275,9 @@ pub fn capture_snapshot(event: CrashEvent) {
             } else {
                 ax_std::println!("[export] no files to export");
             }
+
+            // Step 7: Interactive analysis console.
+            console::interactive_shell(&vmcore, &mem_reader, sym.as_ref(), &result);
         } else {
             ax_std::println!("[recovery] failed to load vmcore for analysis");
         }

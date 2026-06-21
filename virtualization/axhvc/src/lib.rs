@@ -249,6 +249,23 @@ pub enum HyperCallCode {
     /// - `Ok(0)`  on success
     /// - `Err(_)` on failure (file too large, I/O error, …)
     CrashSaveFile = 11,
+
+    /// Read a single character from the console UART on behalf of a VM.
+    ///
+    /// This hypercall is called by the Monitor Guest during interactive
+    /// crash analysis.  Only the hypervisor reads the physical UART;
+    /// the guest receives characters through this proxy, which avoids
+    /// contention when both EL2 and EL1 try to read the same UART FIFO.
+    ///
+    /// # Arguments
+    ///
+    /// None (x1–x5 ignored).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(c)` where `c` is the ASCII value of the next received char.
+    /// - `Err(0)` if no character is available (caller should retry).
+    ConsoleGetChar = 12,
 }
 
 /// Error type for invalid hypercall code conversion.
@@ -281,6 +298,7 @@ impl TryFrom<u32> for HyperCallCode {
             9 => Ok(HyperCallCode::CrashReadGuestMem),
             10 => Ok(HyperCallCode::PollCrashStatus),
             11 => Ok(HyperCallCode::CrashSaveFile),
+            12 => Ok(HyperCallCode::ConsoleGetChar),
             _ => Err(InvalidHyperCallCode(value)),
         }
     }
@@ -321,6 +339,9 @@ impl core::fmt::Debug for HyperCallCode {
             }
             HyperCallCode::CrashSaveFile => {
                 write!(f, "CrashSaveFile {:#x}", *self as u32)
+            }
+            HyperCallCode::ConsoleGetChar => {
+                write!(f, "ConsoleGetChar {:#x}", *self as u32)
             }
         }?;
         write!(f, ")")

@@ -47,6 +47,16 @@ pub fn generate_markdown(analysis: &AnalysisResult) -> String {
     for (name, val) in &analysis.key_registers {
         md.push_str(&format!("| {} | {:#018x} |\n", name, val));
     }
+
+    // Data-structure sanity checks.
+    if let Some(ref d) = analysis.dstruct_check {
+        md.push_str("\n## Data Structure Checks\n\n");
+        for detail in &d.details {
+            md.push_str(&format!("- {}\n", detail));
+        }
+        md.push_str("\n");
+    }
+
     md
 }
 

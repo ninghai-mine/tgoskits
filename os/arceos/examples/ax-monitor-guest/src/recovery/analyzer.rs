@@ -10,6 +10,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::capture::storage::VmcoreFile;
+use crate::recovery::dstruct::{self, DstructResult};
 use crate::recovery::process::ProcessInfo;
 use crate::recovery::symbol::SymbolTable;
 use crate::recovery::unwind::{unwind_stack, StackFrame};
@@ -40,6 +41,8 @@ pub struct AnalysisResult {
     pub possible_causes: Vec<String>,
     /// Key registers at crash time (PC, SP, LR, PSR).
     pub key_registers: Vec<(String, u64)>,
+    /// Data-structure sanity checks.
+    pub dstruct_check: Option<DstructResult>,
 }
 
 /// Run the full analysis pipeline on a loaded vmcore.
@@ -107,8 +110,12 @@ pub fn analyze(
         })
     });
 
-    // 优先使用 ESR/FAR 解码，否则降级到 event-based 诊断
-    let (summary, possible_causes) = match primary_vcpu {
+    // Step 5 — Data-structure sanity checks.
+    let dstruct_check = primary_vcpu
+        .map(|regs| dstruct::check_dstructs(regs, sym, mem));
+
+    // Step 6 — Augment possible_causes with dstruct findings.
+    let (summary, mut possible_causes) = match primary_vcpu {
         Some(regs) if regs.esr_el1 != 0 => {
             decode_esr(regs.esr_el1, regs.far_el1, crash_function.as_deref())
         }
@@ -116,6 +123,20 @@ pub fn analyze(
             generate_diagnosis(&vmcore.crash_event, crash_pc, crash_function.as_deref(), &backtrace)
         }
     };
+    if let Some(ref d) = dstruct_check {
+        for detail in &d.details {
+            // Only add dstruct findings that indicate a problem.
+            let is_warning =
+                d.sp_in_stack == Some(false)
+                || d.current_task_valid == Some(false)
+                || d.irqs_masked == Some(true)
+                || d.exception_nested == Some(true)
+                || d.sp_aligned == Some(false);
+            if is_warning {
+                possible_causes.push(detail.clone());
+            }
+        }
+    }
 
     AnalysisResult {
         analysis_version: "1.0".into(),
@@ -129,6 +150,7 @@ pub fn analyze(
         summary,
         possible_causes,
         key_registers,
+        dstruct_check,
     }
 }
 
