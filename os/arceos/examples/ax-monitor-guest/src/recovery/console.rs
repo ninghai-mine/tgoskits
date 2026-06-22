@@ -6,10 +6,8 @@
 
 extern crate alloc;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
-
-use ax_std::io::Read;
 
 use crate::capture::storage::VmcoreFile;
 use crate::recovery::analyzer::AnalysisResult;
@@ -66,6 +64,8 @@ pub fn interactive_shell(
             "" => {}
             _ => ax_std::println!("Unknown command: '{}'. Type 'help'.", line),
         }
+        // Yield to flush any buffered UART TX output before the next prompt.
+        ax_std::thread::sleep(core::time::Duration::from_millis(10));
     }
 }
 
@@ -176,7 +176,12 @@ fn read_line() -> String {
     loop {
         let ch = read_char_hvc();
         match ch {
-            '\0' => { /* no data yet, spin */ }
+            '\0' => {
+                // No data available — yield to let QEMU deliver the character.
+                // 50ms is long enough for QEMU to actually deliver a UART byte
+                // without lagging the console response.
+                ax_std::thread::sleep(core::time::Duration::from_millis(50));
+            }
             '\r' | '\n' => {
                 ax_std::println!();
                 return buf;
@@ -196,7 +201,7 @@ fn read_line() -> String {
 }
 
 /// Read a single character via HVC #12.
-/// Returns '\0' if no character is available (caller retries).
+/// Returns '\0' if no character is available (caller retries with delay).
 fn read_char_hvc() -> char {
     let ret = hvc_call(12, 0, 0, 0, 0, 0);
     if ret == 0 || ret > 255 {

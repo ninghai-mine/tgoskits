@@ -15,7 +15,6 @@ use crate::capture::memory;
 use crate::monitor::event::CrashEvent;
 use crate::recovery::analyzer;
 use crate::recovery::report;
-use crate::recovery::console;
 use crate::recovery::symbol::SymbolTable;
 use serde::{Deserialize, Serialize};
 
@@ -164,11 +163,11 @@ pub fn capture_snapshot(event: CrashEvent) {
 
     ax_std::println!("[capture] snapshot captured");
 
-    // Step 3: Save vmcore to persistent storage.
+    // Step 5: Save vmcore to persistent storage.
     if let Ok(vmcore_path) = storage::save_vmcore(&snapshot) {
         ax_std::println!("[capture] vmcore saved at: {}", vmcore_path);
 
-        // Step 4: Load vmcore and run recovery analysis.
+        // Step 6: Load vmcore and run recovery analysis.
         if let Some(vmcore) = storage::load_vmcore(&vmcore_path) {
             ax_std::println!("[recovery] starting crash analysis...");
 
@@ -239,7 +238,7 @@ pub fn capture_snapshot(event: CrashEvent) {
                 }
             };
 
-            // Step 6: Export all files to hypervisor storage via HVC #10.
+            // Step 6: Export all files to hypervisor storage via HVC #11.
             // Re-read saved files and send them to the hypervisor.
             let mut export_entries: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -276,8 +275,14 @@ pub fn capture_snapshot(event: CrashEvent) {
                 ax_std::println!("[export] no files to export");
             }
 
-            // Step 7: Interactive analysis console.
-            console::interactive_shell(&vmcore, &mem_reader, sym.as_ref(), &result);
+            // Step 7: Enter interactive crash analysis console.
+            ax_std::println!("[console] entering interactive analysis shell...");
+            crate::recovery::console::interactive_shell(
+                &vmcore,
+                &mem_reader,
+                sym.as_ref(),
+                &result,
+            );
         } else {
             ax_std::println!("[recovery] failed to load vmcore for analysis");
         }

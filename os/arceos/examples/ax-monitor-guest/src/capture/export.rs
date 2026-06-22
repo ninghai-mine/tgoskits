@@ -47,8 +47,13 @@ pub fn save_file_to_hypervisor(filename: &str, data: &[u8]) -> Result<(), String
     }
 
     let name_bytes = filename.as_bytes();
+    // Hypervisor reads filename as a C string (null-terminated).
+    // Append '\0' to ensure correct termination at the guest memory boundary.
+    let name_buf = alloc::vec::Vec::from_iter(
+        name_bytes.iter().copied().chain(core::iter::once(0u8)),
+    );
     let name_gpa =
-        virt_to_phys(VirtAddr::from_usize(name_bytes.as_ptr() as usize)).as_usize() as u64;
+        virt_to_phys(VirtAddr::from_usize(name_buf.as_ptr() as usize)).as_usize() as u64;
     let data_gpa =
         virt_to_phys(VirtAddr::from_usize(data.as_ptr() as usize)).as_usize() as u64;
     let data_len = data.len() as u64;

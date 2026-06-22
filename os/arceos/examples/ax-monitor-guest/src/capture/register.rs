@@ -96,7 +96,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_size() {
-        // 31*8 + sp_el0(8) + elr_el1(8) + spsr_el1(8) + esr_el1(8) + far_el1(8) + crash_type(1) + _padding(7) = 280
+        // 31*8 + sp_el0(8) + elr_el1(8) + spsr_el1(8) + esr_el1(8) + far_el1(8) + crash_type(1) + _padding(7) = 296
         assert_eq!(core::mem::size_of::<CrashVcpuRegs>(), 31 * 8 + 8 + 8 + 8 + 8 + 8 + 1 + 7);
     }
     #[test]

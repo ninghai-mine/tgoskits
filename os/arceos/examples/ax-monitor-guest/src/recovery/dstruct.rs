@@ -15,7 +15,7 @@
 
 extern crate alloc;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::capture::storage::VcpuRegsEntry;
@@ -164,7 +164,9 @@ pub fn check_dstructs(
         for name in &names {
             if let Some(info) = sym_table.lookup_name(name) {
                 found = true;
-                let gva = sym_table.kernel_base + info.addr;
+                // `info.addr` is already the absolute virtual address (ELF st_value).
+                // Do NOT add kernel_base again — that would cause a double-offset.
+                let gva = info.addr;
                 let gpa = gva_to_gpa(gva);
                 if let Some(ptr) = mem(gpa) {
                     if ptr >= KERNEL_STACK_LOW && ptr <= KERNEL_STACK_HIGH {
