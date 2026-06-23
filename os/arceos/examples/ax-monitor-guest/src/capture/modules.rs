@@ -252,8 +252,11 @@ fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
     let mut shstrtab = alloc::vec![0u8; shstrtab_size as usize];
     register::read_guest_mem(target_vm_id, shstrtab_gpa, &mut shstrtab).ok()?;
 
-    // Determine the module's total size: last section's end - base.
-    let mut module_end = 0u64;
+    // Determine the module's extent in guest-virtual address space.
+    // We track both the lowest and highest section virtual addresses to
+    // compute the size entirely in GVA space (avoiding GVA↔GPA confusion).
+    let mut module_va_start = u64::MAX;
+    let mut module_va_end = 0u64;
 
     // Scan sections for `.modinfo` to extract the module name.
     let mut module_name: Option<String> = None;
@@ -264,14 +267,17 @@ fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
         register::read_guest_mem(target_vm_id, shdr_off, &mut shdr).ok()?;
 
         let sh_name = u32::from_le_bytes(shdr[0..4].try_into().ok()?) as usize;
-        let sh_addr = u64::from_le_bytes(shdr[16..24].try_into().ok()?);   // virtual address
+        let sh_addr = u64::from_le_bytes(shdr[16..24].try_into().ok()?);   // virtual address (GVA)
         let sh_size = u64::from_le_bytes(shdr[32..40].try_into().ok()?);    // section size
 
-        // Track the module extent (highest section end).
+        // Track the module extent in virtual-address space.
         if sh_addr > 0 {
+            if sh_addr < module_va_start {
+                module_va_start = sh_addr;
+            }
             let sect_end = sh_addr.wrapping_add(sh_size);
-            if sect_end > module_end {
-                module_end = sect_end;
+            if sect_end > module_va_end {
+                module_va_end = sect_end;
             }
         }
 
@@ -295,11 +301,9 @@ fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
         }
     }
 
-    // Compute the module extent from the highest section end address.
-    // `elf_gpa` is already a GPA (found by ELF magic scan in physical memory),
-    // so we subtract it directly without an extra gva_to_gpa call.
-    let size = if module_end > 0 {
-        (module_end - elf_gpa) as usize
+    // Compute module size entirely in GVA space to avoid address-space mixing.
+    let size = if module_va_end > module_va_start && module_va_start != u64::MAX {
+        (module_va_end - module_va_start) as usize
     } else {
         0
     };
@@ -309,9 +313,13 @@ fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
         format!("module_{:#x}", elf_gpa)
     });
 
-    // The module base address is its GPA (we found it in guest physical memory).
-    // If a kernel virtual address is needed, call gva_to_gpa on this value.
-    let base_addr = elf_gpa;
+    // Use the module's virtual base address (GVA) as the canonical address.
+    // Consumers that need a GPA can call gva_to_gpa on this value.
+    let base_addr = if module_va_start != u64::MAX {
+        module_va_start
+    } else {
+        elf_gpa
+    };
 
     // Sanity-check the size.
     if size >= MIN_MODULE_SIZE as usize && size <= MAX_MODULE_SIZE as usize {
