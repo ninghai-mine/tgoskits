@@ -162,24 +162,35 @@ fn cmd_memory(arg: &str, mem: &impl Fn(u64) -> Option<u64>) {
 // ---------------------------------------------------------------------------
 // I/O helpers
 //
-// Characters are read through HVC #12 (ConsoleGetChar) rather than directly
-// from the UART MMIO or through ax_std::io.  The hypervisor is the sole
-// reader of the physical UART; this proxy completely eliminates character
-// contention between axvisor (EL2) and the monitor guest (EL1).
+// Characters are read directly from the PL011 UART via MMIO (same as
+// ax_std::println! writes to TX).  This avoids HVC #12 entirely, which
+// eliminates the VM-exit / UART contention issue between the monitor
+// guest (EL1) and the hypervisor (EL2).
+//
+// PL011 register offsets (QEMU virt base = 0x900_0000):
+//   DR   = 0x000  (Data Register:   write=TX, read=RX)
+//   FR   = 0x018  (Flag Register)
+//   FR_RXFE = bit 4  (RX FIFO Empty)
 // ---------------------------------------------------------------------------
 
-use crate::capture::hvc::hvc_call;
+/// PL011 physical base address (QEMU virt platform).
+const PL011_PBASE: u64 = 0x900_0000;
+
+/// Lazily-initialized PL011 virtual base address.
+fn pl011_vbase() -> u64 {
+    use ax_hal::mem::{phys_to_virt, PhysAddr};
+    phys_to_virt(PhysAddr::from_usize(PL011_PBASE as usize)).as_usize() as u64
+}
 
 /// Read a line from the console (blocking, with local echo).
 fn read_line() -> String {
     let mut buf = String::new();
+    let vbase = pl011_vbase();
     loop {
-        let ch = read_char_hvc();
+        let ch = read_char_direct(vbase);
         match ch {
             '\0' => {
                 // No data available — yield to let QEMU deliver the character.
-                // 50ms is long enough for QEMU to actually deliver a UART byte
-                // without lagging the console response.
                 ax_std::thread::sleep(core::time::Duration::from_millis(50));
             }
             '\r' | '\n' => {
@@ -200,14 +211,21 @@ fn read_line() -> String {
     }
 }
 
-/// Read a single character via HVC #12.
-/// Returns '\0' if no character is available (caller retries with delay).
-fn read_char_hvc() -> char {
-    let ret = hvc_call(12, 0, 0, 0, 0, 0);
-    if ret == 0 || ret > 255 {
-        '\0'
-    } else {
-        (ret as u8) as char
+/// Read a single character directly from the PL011 UART RX FIFO.
+/// `vbase` is the virtual address of the PL011 registers.
+/// Returns '\0' if no character is available.
+fn read_char_direct(vbase: u64) -> char {
+    let fr_ptr = (vbase + 0x018) as *const u32;
+    let dr_ptr = vbase as *const u32;
+    unsafe {
+        let fr = core::ptr::read_volatile(fr_ptr);
+        if fr & (1 << 4) == 0 {
+            // RXFE == 0 → data available
+            let dr = core::ptr::read_volatile(dr_ptr);
+            ((dr & 0xFF) as u8) as char
+        } else {
+            '\0'
+        }
     }
 }
 

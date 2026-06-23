@@ -499,6 +499,33 @@ impl HyperCall {
                     Ok(0)
                 }
             }
+            HyperCallCode::GuestPanic => {
+                // The calling guest VM is reporting a panic.
+                // Freeze it and set status to Stopped so the monitor
+                // guest can collect crash data via PollCrashStatus (#10).
+                let vm_id = self.vm.id();
+                info!("VM[{}] HyperCall GuestPanic — guest panic notification", vm_id);
+
+                // Lock crash registers from the current TrapFrame.
+                // This captures ELR/SPSR/ESR/FAR at the HVC instruction
+                // site, which reflects the instruction that led to panic.
+                #[cfg(target_arch = "aarch64")]
+                for vcpu in self.vm.vcpu_list() {
+                    let arch_vcpu = vcpu.get_arch_vcpu();
+                    arch_vcpu.ctx.capture_crash_regs();
+                }
+                #[cfg(not(target_arch = "aarch64"))]
+                for _vcpu in self.vm.vcpu_list() {}
+
+                // Pause the VM so PollCrashStatus reports "Stopped".
+                self.vm.set_vm_status(VMStatus::Suspended);
+                if let Err(e) = self.vm.shutdown() {
+                    warn!("VM[{}] GuestPanic shutdown error: {:?}", vm_id, e);
+                }
+
+                info!("VM[{}] GuestPanic — VM frozen, status=Stopped", vm_id);
+                Ok(0)
+            }
             _ => {
                 warn!("Unsupported hypercall code: {:?}", self.code);
                 ax_err!(Unsupported)?

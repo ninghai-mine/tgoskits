@@ -266,6 +266,26 @@ pub enum HyperCallCode {
     /// - `Ok(c)` where `c` is the ASCII value of the next received char.
     /// - `Err(0)` if no character is available (caller should retry).
     ConsoleGetChar = 12,
+
+    /// Notify the hypervisor that the calling guest VM has panicked.
+    ///
+    /// Called by a guest kernel's panic handler (or injected crash test
+    /// code) to report a fatal error to the hypervisor.  The hypervisor
+    /// freezes the VM, locks the current ESR/FAR from the HVC TrapFrame
+    /// (capturing the exact crash registers), and sets VM status to
+    /// Stopped so the monitor guest's PollCrashStatus (HVC #10) detects
+    /// the crash immediately.
+    ///
+    /// # Arguments
+    ///
+    /// None (x1–x5 ignored; the hypervisor reads ELR/SPSR/ESR from the
+    /// HVC trap frame, which reflects the instruction that caused the
+    /// panic, e.g. a data abort or undefined instruction).
+    ///
+    /// # Returns
+    ///
+    /// This hypercall does **not** return to the caller (the VM is frozen).
+    GuestPanic = 13,
 }
 
 /// Error type for invalid hypercall code conversion.
@@ -299,6 +319,7 @@ impl TryFrom<u32> for HyperCallCode {
             10 => Ok(HyperCallCode::PollCrashStatus),
             11 => Ok(HyperCallCode::CrashSaveFile),
             12 => Ok(HyperCallCode::ConsoleGetChar),
+            13 => Ok(HyperCallCode::GuestPanic),
             _ => Err(InvalidHyperCallCode(value)),
         }
     }
@@ -342,6 +363,9 @@ impl core::fmt::Debug for HyperCallCode {
             }
             HyperCallCode::ConsoleGetChar => {
                 write!(f, "ConsoleGetChar {:#x}", *self as u32)
+            }
+            HyperCallCode::GuestPanic => {
+                write!(f, "GuestPanic {:#x}", *self as u32)
             }
         }?;
         write!(f, ")")
