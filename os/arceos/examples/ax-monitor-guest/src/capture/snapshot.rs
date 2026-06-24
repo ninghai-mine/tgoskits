@@ -24,10 +24,11 @@ const TARGET_VM_ID: u64 = 1;
 const TARGET_VCPU_COUNT: u64 = 1;
 
 /// Guest physical memory regions to dump (must match target VM memory layout).
-/// Linux kernel Image is loaded at 0x80200000, RAM base 0x80000000, 256 MiB.
+/// Linux kernel Image is loaded at the start of the VM's memory region.
+/// From AxVisor log: gpa=GPA:0x223400000, size=256 MiB.
 const MEMORY_REGIONS: &[(u64, usize)] = &[
-    (0x80200000, 0x0020_0000),  // 2 MiB kernel image + early boot area
-    (0x8FC00000, 0x0040_0000),  // 4 MiB near end of RAM (decompressed kernel, BSS)
+    (0x223400000, 0x0020_0000),  // 2 MiB kernel image + early boot area
+    (0x233000000, 0x0040_0000),  // 4 MiB near end of RAM (decompressed kernel)
 ];
 
 /// Guest kernel linear mapping offset (GVA → GPA).
