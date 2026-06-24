@@ -20,11 +20,15 @@ use crate::recovery::unwind::StackFrame;
 use serde::{Deserialize, Serialize};
 
 /// Linear mapping offset used for GVA→GPA translation.
-const PHYS_VIRT_OFFSET: u64 = 0xffff_8000_0000_0000;
+/// Linux ARM64 with 48-bit VA: PAGE_OFFSET = 0xffff_0000_0000_0000
+const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
-/// Approximate kernel stack region (adjust per target kernel config).
-const KERNEL_STACK_LOW: u64  = 0xffff_8000_8000_0000;
-const KERNEL_STACK_HIGH: u64 = 0xffff_8000_8800_0000;
+/// Approximate kernel stack region (48-bit VA).
+/// With PAGE_OFFSET=0xffff_0000_0000_0000, kernel stacks are allocated
+/// in the linear mapping area. This range covers the linear map plus
+/// the kernel image identity map region.
+const KERNEL_STACK_LOW: u64  = 0xffff_0000_0000_0000;
+const KERNEL_STACK_HIGH: u64 = 0xffff_8000_ffff_ffff;
 
 /// User space typical address range (48-bit VA).
 const USER_SPACE_LOW: u64  = 0x0000_0000_0000_0000;

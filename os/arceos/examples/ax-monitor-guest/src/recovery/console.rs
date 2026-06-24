@@ -13,7 +13,8 @@ use crate::capture::storage::VmcoreFile;
 use crate::recovery::analyzer::AnalysisResult;
 use crate::recovery::symbol::SymbolTable;
 
-const PHYS_VIRT_OFFSET: u64 = 0xffff_8000_0000_0000;
+/// Linux ARM64 with 48-bit VA: PAGE_OFFSET = 0xffff_0000_0000_0000
+const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
 const BANNER: &str = "\
 ═══════════════════════════════════════════════════════════
