@@ -16,14 +16,16 @@ use crate::capture::register;
 /// Linux ARM64 uses PAGE_OFFSET = 0xffff_0000_0000_0000 (48-bit VA).
 const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
-/// Default kernel log buffer GPA if no address is provided.
-/// This is a known location in the target Guest's physical memory where
-/// the kernel log ring buffer resides. Adjust per target kernel config.
-///
-/// When `None` is passed to `collect_kernel_log`, this address is used as
-/// a fallback. Set to `None` if the buffer address must be resolved from
-/// kernel ELF symbols.
-const DEFAULT_LOG_BUF_GPA: Option<u64> = None;
+/// Linux kernel image virtual base (from System.map _text).
+/// Used to convert kernel-image-area addresses (BSS, data) to GPA.
+/// PA = VA - KERNEL_IMAGE_TEXT_VA + KERNEL_IMAGE_TEXT_PA
+const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;
+const KERNEL_IMAGE_TEXT_PA: u64 = 0x2_2340_0000;
+
+/// Default kernel log buffer GPA.
+/// __log_buf VA=0xffff8000814d8000 → PA=0x2241d8000
+/// (verified via /proc/iomem: Kernel code 0x223400000-0x224cfffff)
+const DEFAULT_LOG_BUF_GPA: Option<u64> = Some(0x2_241d_8000);
 
 /// Maximum bytes to read from the log ring buffer in one HVC #9 call.
 const MAX_READ_SIZE: usize = 64 * 1024; // 64 KB
@@ -37,9 +39,14 @@ pub struct KernelLogResult {
 }
 
 /// Convert a Guest Virtual Address (GVA) to a Guest Physical Address (GPA)
-/// using the linear mapping offset.
+/// using the linear mapping offset or kernel image offset.
 pub fn gva_to_gpa(gva: u64) -> u64 {
-    if gva >= PHYS_VIRT_OFFSET {
+    // Kernel image area (0xffff8000_xxxxxxxx)
+    if gva >= KERNEL_IMAGE_TEXT_VA && gva < KERNEL_IMAGE_TEXT_VA + 0x200_0000 {
+        gva - KERNEL_IMAGE_TEXT_VA + KERNEL_IMAGE_TEXT_PA
+    }
+    // Linear map (0xffff_0000_0000_0000)
+    else if gva >= PHYS_VIRT_OFFSET {
         gva.wrapping_sub(PHYS_VIRT_OFFSET)
     } else {
         gva
