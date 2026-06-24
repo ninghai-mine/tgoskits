@@ -34,13 +34,14 @@ use crate::capture::register;
 /// Guest kernel linear mapping offset (GVA → GPA).
 const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
-/// Linux kernel image area base.
+/// Linux kernel image area base (from System.map _text).
+/// Guest PA = VA - KERNEL_IMAGE_TEXT_VA + KERNEL_IMAGE_TEXT_PA
 const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;
-const KERNEL_IMAGE_TEXT_PA: u64 = 0x2_2340_0000;
+const KERNEL_IMAGE_TEXT_PA: u64 = 0x8020_0000;
 
 /// GPA of `printk_rb_static` symbol.
-/// VA 0xffff800081298108 → PA 0x224298108
-const PRINTK_RB_STATIC_GPA: u64 = 0x2_2429_8108;
+/// VA 0xffff800081298108 → PA = (VA - 0xffff800080000000) + 0x80200000 = 0x81498108
+const PRINTK_RB_STATIC_GPA: u64 = 0x8149_8108;
 
 /// Descriptor state: finalized (ready for reading).
 const DESC_FINALIZED: u64 = 0x2;

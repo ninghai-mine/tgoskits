@@ -9,6 +9,8 @@ Target: Linux 6.12.94, aarch64, built as a flat `Image` for AxVisor Type-1 hyper
 | `config` | Kernel `.config` (Alpine virt baseline + debug options) |
 | `panic_hvc.patch` | HVC #13 (GuestPanic) patch for crash monitoring |
 | `build.sh` | Build script (download, patch, compile, copy) |
+| `modules/crash_test/` | 内核崩溃测试模块源码（NULL 指针 / BUG / 未定义指令） |
+| `build.sh` | Build script (download, patch, compile, copy) |
 
 ---
 
@@ -101,23 +103,19 @@ tar xzf alpine-minirootfs-3.21.0-aarch64.tar.gz -C /mnt/rootfs
 umount /mnt/rootfs
 ```
 
-### 3.5 部署内核模块到 rootfs
-
-模块通过 `debugfs` 写入 rootfs 镜像（无需挂载）：
+### 3.5 编译并部署崩溃测试模块
 
 ```bash
-# 编译模块
-cd /tmp/linux-6.12.94
-make modules_prepare ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-cd /path/to/module
+# 编译 crash_test.ko
+cd tgoskits/os/linux/modules/crash_test
 make -C /tmp/linux-6.12.94 M=$PWD ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 
 # 写入 rootfs
-printf "rm /module.ko\nwrite /path/to/module.ko /module.ko\nquit\n" \
-  | debugfs -w tmp/axbuild/rootfs/rootfs-aarch64-alpine.img
+printf "rm /crash_test.ko\nwrite crash_test.ko /crash_test.ko\nquit\n" \
+  | debugfs -w ../../../tmp/axbuild/rootfs/rootfs-aarch64-alpine.img
 
 # 修复文件系统（debugfs 直接写可能破坏元数据）
-e2fsck -fy tmp/axbuild/rootfs/rootfs-aarch64-alpine.img
+e2fsck -fy ../../../tmp/axbuild/rootfs/rootfs-aarch64-alpine.img
 ```
 
 > **注意**: 每次用 `debugfs -w` 写文件后必须运行 `e2fsck -fy`，否则 Linux guest 中 `insmod` 会报 "deleted inode referenced"。

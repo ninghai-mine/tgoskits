@@ -25,6 +25,12 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
+    /// Create a SymbolTable from pre-sorted symbol data.
+    /// Used by the kallsyms decoder.
+    pub fn from_sorted_symbols(symbols: Vec<SymbolInfo>, kernel_base: u64) -> Self {
+        SymbolTable { symbols, kernel_base }
+    }
+
     pub fn from_kernel_elf(elf_path: &str, kernel_base: u64) -> Result<Self, String> {
         let buffer = ax_std::fs::read(elf_path)
             .map_err(|e| format!("cannot read {}: {}", elf_path, e))?;
