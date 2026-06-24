@@ -174,6 +174,28 @@ impl Aarch64ContextFrame {
     ///
     /// If crash registers are locked, returns the captured crash values;
     /// otherwise returns the current (last VM exit) values.
+    /// Returns whether crash registers have been locked.
+    pub fn crash_locked(&self) -> u64 {
+        self.crash_locked
+    }
+
+    /// Override the locked crash ESR/FAR with guest-reported values.
+    ///
+    /// Used by the `GuestPanic` HVC handler: the guest reads ESR_EL1/FAR_EL1
+    /// at panic time (the original hardware exception values) and passes them
+    /// as HVC arguments.  This function replaces the HVC-syndrome values that
+    /// `capture_crash_regs` locked (which only reflect the HVC instruction,
+    /// EC=0x16, ISS=0) with the real fault syndrome.
+    pub fn override_crash_esr_far(&mut self, esr: u64, far: u64) {
+        self.crash_esr_el2 = esr;
+        self.crash_far_el2 = far;
+        trace!("crash registers overridden: esr={:#x}, far={:#x}", esr, far);
+    }
+
+    /// Returns the (ESR_EL2, FAR_EL2) pair.
+    ///
+    /// If crash registers are locked, returns the captured crash values;
+    /// otherwise returns the current (last VM exit) values.
     pub fn crash_esr_far(&self) -> (u64, u64) {
         if self.crash_locked != 0 {
             (self.crash_esr_el2, self.crash_far_el2)

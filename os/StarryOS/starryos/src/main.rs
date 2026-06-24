@@ -10,13 +10,9 @@ pub const CMDLINE: &[&str] = &["/bin/sh", "-c", include_str!("init.sh")];
 
 #[unsafe(no_mangle)]
 fn main() {
-    // Intentional crash for testing crash monitor:
-    // Issue HVC #13 (GuestPanic) to notify the hypervisor.
-    // The hypervisor locks crash registers from the HVC TrapFrame
-    // and sets VM status to Stopped, so PollCrashStatus detects it.
-    unsafe {
-        core::arch::asm!("hvc #0", in("x0") 13u64);
-    }
+    // Normal boot — StarryOS runs its init and presents a shell.
+    // A crash trigger can be injected later through a kernel module,
+    // test app, or echo c > /proc/sysrq-trigger equivalent.
 
     let args = CMDLINE
         .iter()

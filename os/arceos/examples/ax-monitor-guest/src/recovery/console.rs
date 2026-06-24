@@ -112,12 +112,6 @@ fn cmd_info(result: &AnalysisResult) {
     }
     ax_std::println!("  Summary:   {}", result.summary);
     ax_std::println!("  Process:   {} (PID: {:?})", result.process.name, result.process.pid);
-    if let Some(ref d) = result.dstruct_check {
-        ax_std::println!("  Checks:");
-        for detail in &d.details {
-            ax_std::println!("    - {}", detail);
-        }
-    }
 }
 
 fn cmd_dmesg(vmcore: &VmcoreFile) {

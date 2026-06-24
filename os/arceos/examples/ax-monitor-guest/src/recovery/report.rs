@@ -49,13 +49,7 @@ pub fn generate_markdown(analysis: &AnalysisResult) -> String {
     }
 
     // Data-structure sanity checks.
-    if let Some(ref d) = analysis.dstruct_check {
-        md.push_str("\n## Data Structure Checks\n\n");
-        for detail in &d.details {
-            md.push_str(&format!("- {}\n", detail));
-        }
-        md.push_str("\n");
-    }
+    // (dstruct_check field removed — not yet implemented for Linux targets)
 
     md
 }

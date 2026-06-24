@@ -22,16 +22,18 @@ use serde::{Deserialize, Serialize};
 const TARGET_VM_ID: u64 = 1;
 const TARGET_VCPU_COUNT: u64 = 1;
 
-/// Guest physical memory regions to dump (must match target-guest-memory.toml).
-/// Kernel image is at 0x8020_0000 (2 MiB), dump 1 MiB around it.
+/// Guest physical memory regions to dump (must match target VM memory layout).
+/// Linux kernel Image is loaded at the start of the VM's memory region.
+/// From AxVisor log: gpa=GPA:0x223400000, size=256 MiB.
 const MEMORY_REGIONS: &[(u64, usize)] = &[
-    (0x8020_0000, 0x0010_0000), // 1 MiB kernel image area
+    (0x223400000, 0x0020_0000),  // 2 MiB kernel image + early boot area
+    (0x233000000, 0x0040_0000),  // 4 MiB near end of RAM (decompressed kernel)
 ];
 
 /// Guest kernel linear mapping offset (GVA → GPA).
-/// StarryOS/ArceOS AArch64 uses KERNEL_ASPACE_BASE = 0xffff_8000_0000_0000,
-/// so the kernel virtual address is: GPA + PHYS_VIRT_OFFSET.
-const PHYS_VIRT_OFFSET: u64 = 0xffff_8000_0000_0000;
+/// Linux ARM64 uses PAGE_OFFSET = 0xffff_0000_0000_0000 (48-bit VA).
+/// So virtual address → physical: GPA = VA - PHYS_VIRT_OFFSET.
+const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
 /// Path to the target kernel ELF (with symbol table) inside the monitor guest's filesystem.
 /// Set to empty string to disable symbol resolution.

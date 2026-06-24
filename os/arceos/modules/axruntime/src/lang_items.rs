@@ -49,6 +49,38 @@ fn should_print_panic_backtrace() -> bool {
 }
 
 fn panic_shutdown() -> ! {
+    // Read the hardware ESR_EL1/FAR_EL1 set by the original exception.
+    // These persist from when the fault (e.g., Data Abort) was taken
+    // at EL1, through the trap handler, until here — unless a nested
+    // exception overwrote them.
+    let esr: u64;
+    let far: u64;
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("mrs {0}, esr_el1", out(reg) esr);
+        core::arch::asm!("mrs {0}, far_el1", out(reg) far);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        esr = 0;
+        far = 0;
+    }
+
+    // Notify the hypervisor (if present) via GuestPanic HVC #13.
+    // Pass ESR/FAR as arguments so the hypervisor can capture them
+    // even if `mrs esr_el1` at EL2 returns a different value.
+    //
+    // When no hypervisor is present, HVC at EL1 triggers an exception
+    // (recursive panic → system_off).  Either way we reach shutdown.
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("hvc #0",
+            in("x0") 13u64,
+            in("x1") esr,
+            in("x2") far,
+            options(noreturn));
+    }
+
     ax_hal::power::system_off()
 }
 

@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 use crate::capture::register;
 
 /// Guest kernel linear mapping offset (GVA → GPA).
-/// ArceOS/StarryOS AArch64: KERNEL_ASPACE_BASE = 0xffff_8000_0000_0000.
-const PHYS_VIRT_OFFSET: u64 = 0xffff_8000_0000_0000;
+/// Linux ARM64 uses PAGE_OFFSET = 0xffff_0000_0000_0000 (48-bit VA).
+const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
 /// Default kernel log buffer GPA if no address is provided.
 /// This is a known location in the target Guest's physical memory where
