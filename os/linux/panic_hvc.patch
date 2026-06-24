@@ -1,0 +1,19 @@
+--- a/kernel/panic.c
++++ b/kernel/panic.c
+@@ -345,6 +345,14 @@ void panic(const char *fmt, ...)
+ 
+ 	pr_emerg("---[ end Kernel panic - not syncing: %s ]---\n", buf);
+ 
++	/* Notify hypervisor via GuestPanic HVC (#13) if running under one */
++#ifdef CONFIG_ARM64
++	{
++		register u64 x0 asm("x0") = 13;
++		register u64 x1 asm("x1") = 0;
++		register u64 x2 asm("x2") = 0;
++		asm volatile("hvc #0" : : "r"(x0), "r"(x1), "r"(x2) : "memory");
++	}
++#endif
++
+ 	/* Do not scroll important messages */
+ 	suppress_printk = 1;
+ 	local_irq_enable();

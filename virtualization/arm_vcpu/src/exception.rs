@@ -85,6 +85,10 @@ core::arch::global_asm!(
 pub fn handle_exception_sync(ctx: &mut TrapFrame) -> AxResult<AxVCpuExitReason> {
     match exception_class() {
         Some(ESR_EL2::EC::Value::DataAbortLowerEL) => {
+            // Lock the guest ESR_EL1/FAR_EL1 immediately — before any
+            // subsequent HVC or other exit overwrites them.
+            ctx.capture_crash_regs();
+
             let elr = ctx.exception_pc();
             let val = elr + exception_next_instruction_step();
             ctx.set_exception_pc(val);
