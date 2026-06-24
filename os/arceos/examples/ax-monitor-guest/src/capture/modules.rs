@@ -113,7 +113,7 @@ pub fn collect_modules(target_vm_id: u64, head_gpa: Option<u64>) -> Result<Modul
     // ── Strategy B: scan GPA ranges for ELF headers −──
     let scan_regions: &[(u64, u64)] = &[
         // Module loading area (just after the kernel image).
-        (KERNEL_IMAGE_GPA_END, 0x0040_0000), // 4 MiB
+        (KERNEL_IMAGE_GPA_END, 0x0020_0000), // 2 MiB
     ];
 
     let mut modules: Vec<ModuleInfo> = Vec::new();
