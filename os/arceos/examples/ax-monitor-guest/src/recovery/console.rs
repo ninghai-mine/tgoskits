@@ -118,9 +118,18 @@ fn cmd_info(result: &AnalysisResult) {
 fn cmd_dmesg(vmcore: &VmcoreFile) {
     if let Some(ref log) = vmcore.kernel_log {
         ax_std::println!("{}", log);
-    } else {
-        ax_std::println!("(kernel log not captured)");
+        return;
     }
+    // Fallback: try loading from separate .log file (written by storage.rs)
+    let log_file = alloc::format!("vmcore_{}_{}.log", vmcore.timestamp, vmcore.crash_event);
+    let log_path = alloc::format!("/vmcore/{}", log_file);
+    if let Ok(content) = ax_std::fs::read_to_string(&log_path) {
+        if !content.is_empty() {
+            ax_std::println!("{}", content);
+            return;
+        }
+    }
+    ax_std::println!("(kernel log not captured)");
 }
 
 fn cmd_modules(vmcore: &VmcoreFile) {

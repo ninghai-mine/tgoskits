@@ -95,8 +95,17 @@ pub fn read_kallsyms(
     let mut offsets_raw = alloc::vec![0u8; offsets_size];
     read_fn(target_vm_id, addrs.offsets_gpa, &mut offsets_raw)?;
 
-    // Step 5: Pre-scan names array to figure out total size needed
-    // We'll read names on-demand per symbol using markers for acceleration
+    // Step 5: Read entire names array into buffer (use last marker as total size).
+    let names_total_size = if marker_count > 0 {
+        markers[marker_count as usize - 1] as usize
+    } else {
+        0
+    };
+    if names_total_size == 0 || names_total_size > 8 * 1024 * 1024 {
+        return Err(format!("kallsyms_names size out of range: {}", names_total_size));
+    }
+    let mut names_buf = alloc::vec![0u8; names_total_size];
+    let _ = read_fn(target_vm_id, addrs.names_gpa, &mut names_buf)?;
 
     // Step 6: Read token table and token index (these are small)
     //   token_index: 256 * u16 = 512 bytes
@@ -111,9 +120,8 @@ pub fn read_kallsyms(
     let mut token_table_buf = alloc::vec![0u8; 65536];
     let token_table_len = read_fn(target_vm_id, addrs.token_table_gpa, &mut token_table_buf)?;
 
-    // Step 7: Decode each symbol and build symbol table
+    // Step 7: Decode each symbol and build symbol table from local buffer.
     let mut symbols = Vec::with_capacity(num_syms as usize);
-    let mut sym_offset: u32 = 0; // our tracking of position within names
 
     for i in 0..num_syms as usize {
         // Get address: relative_base + offsets[i] (as s32)
@@ -125,45 +133,38 @@ pub fn read_kallsyms(
         ]);
         let addr = relative_base.wrapping_add(off_val as i64 as u64);
 
-        // Get the name offset in kallsyms_names using markers + sequential scan
-        let name_start = match get_symbol_offset(i, &markers, target_vm_id, addrs.names_gpa, read_fn) {
-            Ok(off) => off,
-            Err(_) => break, // corrupted, stop decoding
-        };
+        // Get the name offset in kallsyms_names using markers + sequential scan (local buffer)
+        let name_start = get_symbol_offset_buf(i, &markers, &names_buf);
 
-        // Read compressed name from the name buffer
-        // First read just the length byte(s)
-        let mut len_byte = [0u8; 1];
-        let _ = read_fn(target_vm_id, addrs.names_gpa.wrapping_add(name_start as u64), &mut len_byte)?;
-
-        let (name_len, name_data_start) = if (len_byte[0] & 0x80) != 0 {
-            // Big symbol: extra length byte
-            let mut extra = [0u8; 1];
-            let _ = read_fn(
-                target_vm_id,
-                addrs.names_gpa.wrapping_add(name_start as u64 + 1),
-                &mut extra,
-            )?;
-            let total_len = ((len_byte[0] & 0x7F) as usize) | ((extra[0] as usize) << 7);
-            (total_len, name_start + 2)
+        // Parse length byte(s) from local buffer
+        let ns = name_start as usize;
+        if ns >= names_buf.len() {
+            break;
+        }
+        let len_byte = names_buf[ns];
+        let (name_len, nds) = if (len_byte & 0x80) != 0 {
+            if ns + 1 >= names_buf.len() {
+                break;
+            }
+            let extra = names_buf[ns + 1];
+            let total_len = ((len_byte & 0x7F) as usize) | ((extra as usize) << 7);
+            (total_len, ns + 2)
         } else {
-            (len_byte[0] as usize, name_start + 1)
+            (len_byte as usize, ns + 1)
         };
 
         if name_len == 0 || name_len > 4096 {
-            continue; // skip corrupted entry
+            continue;
+        }
+        if nds + name_len > names_buf.len() {
+            break;
         }
 
-        // Read the compressed name data
-        let mut name_data = alloc::vec![0u8; name_len];
-        let _ = read_fn(
-            target_vm_id,
-            addrs.names_gpa.wrapping_add(name_data_start as u64),
-            &mut name_data,
-        )?;
+        // Read compressed name data from local buffer
+        let name_data = &names_buf[nds..][..name_len];
 
         // Decompress
-        let name = kallsyms_expand_symbol(&name_data, &token_table_buf[..token_table_len], &token_index);
+        let name = kallsyms_expand_symbol(name_data, &token_table_buf[..token_table_len], &token_index);
         if name.is_empty() {
             continue;
         }
@@ -171,7 +172,7 @@ pub fn read_kallsyms(
         symbols.push(SymbolInfo {
             name,
             addr,
-            size: 0, // kallsyms doesn't store symbol sizes
+            size: 0,
         });
     }
 
@@ -196,16 +197,8 @@ pub fn read_kallsyms(
 
 /// Find the offset within `kallsyms_names` for the symbol at position `pos`.
 ///
-/// Uses markers for acceleration: markers[pos >> 8] gives the offset in
-/// names at the start of the marker group (every 256 symbols), then
-/// scans forward `pos & 0xFF` symbols.
-fn get_symbol_offset(
-    pos: usize,
-    markers: &[u32],
-    target_vm_id: u64,
-    names_gpa: u64,
-    read_fn: &impl Fn(u64, u64, &mut [u8]) -> Result<usize, String>,
-) -> Result<u32, String> {
+/// Uses markers for acceleration and a local buffer (no HVC calls).
+fn get_symbol_offset_buf(pos: usize, markers: &[u32], names_buf: &[u8]) -> u32 {
     let marker_idx = pos >> 8;
     let marker_off = if marker_idx < markers.len() {
         markers[marker_idx]
@@ -213,25 +206,27 @@ fn get_symbol_offset(
         0
     };
 
-    let mut off = marker_off;
+    let mut off = marker_off as usize;
     let remaining = pos & 0xFF;
-    let mut buf = [0u8; 3]; // max: 2 length bytes + 1 peek
 
     for _ in 0..remaining {
-        // Read length byte
-        let _ = read_fn(target_vm_id, names_gpa.wrapping_add(off as u64), &mut buf[..1])?;
-        let len_byte = buf[0];
-        let entry_len = if (len_byte & 0x80) != 0 {
-            // Big symbol: 2 length bytes
-            let _ = read_fn(target_vm_id, names_gpa.wrapping_add(off as u64 + 1), &mut buf[..1])?;
-            let total = ((len_byte & 0x7F) as u32) | ((buf[0] as u32) << 7);
-            off += 1 + 1 + total // len_byte + extra_len + data
+        if off >= names_buf.len() {
+            break;
+        }
+        let len_byte = names_buf[off];
+        if (len_byte & 0x80) != 0 {
+            if off + 1 >= names_buf.len() {
+                break;
+            }
+            let extra = names_buf[off + 1];
+            let total = ((len_byte & 0x7F) as usize) | ((extra as usize) << 7);
+            off += 1 + 1 + total;
         } else {
-            off += 1 + len_byte as u32
-        };
+            off += 1 + len_byte as usize;
+        }
     }
 
-    Ok(off)
+    off as u32
 }
 
 /// Decompress a kallsyms name from its compressed token representation.

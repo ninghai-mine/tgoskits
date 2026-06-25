@@ -57,6 +57,12 @@ pub fn save_vmcore(snapshot: &CrashSnapshot) -> Result<String, String> {
     let file_name = format!("vmcore_{}_{}.json", timestamp, event_name);
     let file_path = format!("{}/{}", VMCORE_DIR, file_name);
 
+    // Save kernel_log to a separate file to keep the JSON metadata small.
+    if let Some(ref log) = snapshot.kernel_log {
+        let log_path = format!("{}/{}", VMCORE_DIR, file_name.replace(".json", ".log"));
+        let _ = ax_std::fs::write(&log_path, log.as_bytes());
+    }
+
     let vmcore = VmcoreFile {
         vmcore_version: VMCORE_VERSION.to_string(), timestamp, target_vm_id: 1,
         crash_event: event_name, vcpu_count: snapshot.vcpu_regs.len(),
@@ -64,7 +70,7 @@ pub fn save_vmcore(snapshot: &CrashSnapshot) -> Result<String, String> {
             vcpu_id: *id, gpr: r.gpr, sp_el0: r.sp_el0, elr_el1: r.elr_el1, spsr_el1: r.spsr_el1,
             esr_el1: r.esr_el1, far_el1: r.far_el1, crash_type: r.crash_type,
         }).collect(),
-        memory_dump_offset: None, kernel_log: snapshot.kernel_log.clone(),
+        memory_dump_offset: None, kernel_log: None,
         modules: snapshot.modules.clone(),
         memory_segments: snapshot.memory_segments.iter().map(|s| MemoryDumpRef {
             base_gpa: s.base_gpa,

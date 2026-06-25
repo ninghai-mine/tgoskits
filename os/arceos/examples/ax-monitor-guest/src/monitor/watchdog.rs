@@ -6,7 +6,7 @@ use crate::monitor::heartbeat::get_heartbeat;
 use crate::monitor::panic::trigger_crash_event;
 use crate::monitor::state::{set_vm_state, VmState};
 
-const WATCHDOG_TIMEOUT_SECS: u64 = 5;
+const WATCHDOG_TIMEOUT_SECS: u64 = 60;
 
 pub fn start_watchdog() {
     thread::spawn(move || {

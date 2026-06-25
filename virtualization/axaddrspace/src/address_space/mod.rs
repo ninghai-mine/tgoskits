@@ -237,7 +237,45 @@ impl<H: PagingHandler> AddrSpace<H> {
             }
             Some(v)
         } else {
-            None
+            // Fallback: address not in a tracked area but might have page table
+            // entries (e.g., kernel image loaded at kernel_load_addr outside
+            // the configured memory_regions range). Try direct page table walk.
+            warn!("AddrSpace translated_byte_buffer fallback for GPA={:#x}, len={}", vaddr, len);
+            let mut start = vaddr;
+            let end = start + len;
+            let mut v = Vec::new();
+            while start < end {
+                match self.page_table().query(start) {
+                    Ok((start_paddr, _, page_size)) => {
+                        let page_start = start.align_down(page_size);
+                        let mut end_va = page_start + page_size.into();
+                        end_va = end_va.min(end);
+                        debug!("  fallback: GPA={:#x} → HPA={:#x} page_size={:?}",
+                            start, start_paddr, page_size);
+
+                        v.push(unsafe {
+                            core::slice::from_raw_parts_mut(
+                                H::phys_to_virt(start_paddr).as_mut_ptr(),
+                                (end_va - start.as_usize()).into(),
+                            )
+                        });
+                        start = end_va;
+                    }
+                    Err(e) => {
+                        warn!("  fallback: GPA={:#x} page table query failed: {:?}", start, e);
+                        if v.is_empty() {
+                            return None;
+                        }
+                        break;
+                    }
+                }
+            }
+            if v.is_empty() {
+                warn!("  fallback: no data read at all");
+                return None;
+            }
+            debug!("  fallback: read {} pages successfully", v.len());
+            Some(v)
         }
     }
 

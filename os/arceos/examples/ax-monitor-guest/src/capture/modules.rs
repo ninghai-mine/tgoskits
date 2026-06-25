@@ -75,8 +75,8 @@ const MAX_MODULE_SIZE: u64 = 32 * 1024 * 1024;
 const MAX_MODULES: usize = 64;
 
 /// End of the kernel image GPA — modules are typically loaded after this.
-/// Linux kernel loaded at GPA 0x223400000, 256 MiB region.
-const KERNEL_IMAGE_GPA_END: u64 = 0x233200000;
+/// Linux kernel loaded at GPA 0x223600000, 256 MiB region.
+const KERNEL_IMAGE_GPA_END: u64 = 0x233400000;
 
 // ---------------------------------------------------------------------------
 // Public API

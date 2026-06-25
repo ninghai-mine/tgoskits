@@ -34,13 +34,19 @@ use crate::capture::register;
 /// Guest kernel linear mapping offset (GVA → GPA).
 const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
-/// Linux kernel image area base.
+/// Linux kernel image area base (runtime MAP_IDENTICAL GPA).
+/// From AxVisor log: gpa=GPA:0x223600000, size=256 MiB.
 const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;
-const KERNEL_IMAGE_TEXT_PA: u64 = 0x2_2340_0000;
+const KERNEL_IMAGE_TEXT_PA: u64 = 0x2_2360_0000;
+
+/// Default kernel log buffer GPA.
+/// __log_buf VA=0xffff800081657fb8 → GPA=0x224c57fb8
+/// Formula: GPA = VA - 0xffff800080000000 + 0x223600000
+const DEFAULT_LOG_BUF_GPA: Option<u64> = Some(0x224_c57f_b8);
 
 /// GPA of `printk_rb_static` symbol.
-/// VA 0xffff800081298108 → PA 0x224298108
-const PRINTK_RB_STATIC_GPA: u64 = 0x2_2429_8108;
+/// VA 0xffff800081418110 → GPA 0x224a18110
+const PRINTK_RB_STATIC_GPA: u64 = 0x2_24a1_8110;
 
 /// Descriptor state: finalized (ready for reading).
 const DESC_FINALIZED: u64 = 0x2;
@@ -117,14 +123,59 @@ fn read_guest_buf(vm_id: u64, gpa: u64, size: usize) -> Result<Vec<u8>, String> 
     Ok(buf)
 }
 
-/// Collect kernel log using prb ringbuffer parsing.
+/// Collect kernel log.
+/// First tries simple raw buffer read (from DEFAULT_LOG_BUF_GPA),
+/// then falls back to prb ringbuffer parsing.
 pub fn collect_kernel_log(
     target_vm_id: u64,
-    _log_buf_gpa: Option<u64>,
-    _max_size: usize,
+    log_buf_gpa: Option<u64>,
+    max_size: usize,
 ) -> Result<KernelLogResult, String> {
+    // Try simple approach first: read __log_buf directly
+    if let Some(gpa) = log_buf_gpa {
+        let read_size = max_size.min(MAX_READ_SIZE);
+        let mut buffer = vec![0u8; read_size];
+        match register::read_guest_mem(target_vm_id, gpa, &mut buffer) {
+            Ok(read_len) if read_len > 0 => {
+                buffer.truncate(read_len);
+                // Print raw hex of first 64 bytes for debugging
+                let mut hex_preview = alloc::format!("[log] __log_buf @ {:#x}: {} bytes, first bytes: ", gpa, read_len);
+                for &b in buffer.iter().take(64) {
+                    hex_preview.push_str(&alloc::format!("{:02x} ", b));
+                }
+                ax_std::println!("{}", hex_preview);
+
+                let mut raw_text = String::new();
+                let mut printable_count = 0usize;
+                for &c in &buffer {
+                    if c >= 0x20 && c <= 0x7e || c == b'\n' || c == b'\r' || c == b'\t' {
+                        raw_text.push(c as char);
+                        printable_count += 1;
+                    }
+                }
+                ax_std::println!("[log] simple read: {} printable chars out of {} bytes", printable_count, read_len);
+                if !raw_text.is_empty() {
+                    ax_std::println!("[log] collected {} chars (simple read)", raw_text.len());
+                    return Ok(KernelLogResult { raw_text, bytes_read: read_len });
+                }
+            }
+            Ok(_) => {
+                ax_std::println!("[log] simple read: read_guest_mem returned 0 bytes");
+            }
+            Err(e) => {
+                ax_std::println!("[log] simple read failed: {}", e);
+            }
+        }
+    }
+
+    // Fallback: prb ringbuffer parsing
     // 1. Read printk_ringbuffer struct (~88 bytes, but 80 is enough)
-    let rb_buf = read_guest_buf(target_vm_id, PRINTK_RB_STATIC_GPA, 80)?;
+    let rb_buf = match read_guest_buf(target_vm_id, PRINTK_RB_STATIC_GPA, 80) {
+        Ok(buf) => buf,
+        Err(e) => {
+            return Err(alloc::format!("prb: read_guest_buf(PRINTK_RB_STATIC_GPA={:#x}) failed: {}", PRINTK_RB_STATIC_GPA, e));
+        }
+    };
 
     let desc_count_bits = read_u32_le(&rb_buf, RB_DESC_RING_COUNT_BITS_OFF);
     let descs_va = read_u64_le(&rb_buf, RB_DESC_RING_DESCS_OFF);
@@ -140,9 +191,14 @@ pub fn collect_kernel_log(
     let data_gpa = gva_to_gpa(data_va);
 
     ax_std::println!(
-        "[log] prb: {} descs, data_ring={:#x} (gpa={:#x}), __log_buf gpa={:#x}",
-        num_descs, data_va, data_gpa, data_gpa,
+        "[log] prb: {} descs, descs_gpa={:#x}, infos_gpa={:#x}, data_gpa={:#x}, data_size={}KB",
+        num_descs, descs_gpa, infos_gpa, data_gpa, data_size / 1024,
     );
+
+    // Validate GPA ranges
+    if data_gpa == 0 || data_size > 1024*1024 || num_descs > 65536 {
+        return Err(alloc::format!("prb: invalid ringbuffer metadata: data_gpa={:#x}, data_size={}, num_descs={}", data_gpa, data_size, num_descs));
+    }
 
     // 2. Read the data ring buffer (entire buffer)
     let data_ring = read_guest_buf(target_vm_id, data_gpa, data_size as usize)?;

@@ -64,3 +64,11 @@ os/StarryOS-REF
 starry-*.log
 loongarch64-axvisor-guest-tests.md
 os/linux/src/linux-*/
+os/linux/modules/crash_test/*.o
+os/linux/modules/crash_test/*.ko
+os/linux/modules/crash_test/*.cmd
+os/linux/modules/crash_test/*.mod
+os/linux/modules/crash_test/Module.symvers
+os/linux/modules/crash_test/modules.order
+os/linux/modules/crash_test/.module-common.o
+os/linux/modules/crash_test/.cache
