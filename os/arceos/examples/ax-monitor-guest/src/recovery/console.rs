@@ -87,7 +87,12 @@ fn cmd_bt(result: &AnalysisResult) {
     for (i, frame) in result.backtrace.iter().enumerate() {
         let func = frame.func_name.as_deref().unwrap_or("<unknown>");
         let off = frame.func_offset.map(|o| format!("+{}", o)).unwrap_or_default();
-        ax_std::println!("  #{:<3} {:#018x}  {}{}", i, frame.pc, func, off);
+        if frame.pc != 0 {
+            ax_std::println!("  #{:<3} {:#018x}  {}{}", i, frame.pc, func, off);
+        } else {
+            // PC not available (module symbol or dmesg-extracted frame)
+            ax_std::println!("  #{:<3}                  {}{}", i, func, off);
+        }
     }
 }
 

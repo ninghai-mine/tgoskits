@@ -122,17 +122,73 @@ pub fn identify(
         }
     }
 
-    // ── Heuristic 4: Try to read current_task from kernel global ──
+    // ── Heuristic 4: Try SP_EL0 as current task_struct pointer (Linux ARM64) ──
+    // On Linux ARM64, SP_EL0 holds the `current` task_struct pointer when
+    // the CPU is in kernel mode (EL1).  This is set by `__switch_to()`.
+    let sp_el0 = regs.sp_el0;
+    if sp_el0 >= PHYS_VIRT_OFFSET || (sp_el0 >= 0xffff_8000_0000_0000u64) {
+        // sp_el0 looks like a kernel address — try to read PID from task_struct.
+        // task_struct.pid offset for Linux 6.12 ARM64: typical offset 0x730-0x780.
+        // We probe known offsets to find the PID.
+        let pid_offsets: &[u64] = &[0x730, 0x738, 0x740, 0x750, 0x780, 0x798, 0x7a0, 0x870, 0x878];
+        for &off in pid_offsets {
+            if let Some(val) = mem(sp_el0 + off) {
+                let pid_candidate = (val & 0xFFFFFFFF) as u32;
+                if pid_candidate > 0 && pid_candidate < 100000 {
+                    // Try to read process name (comm) at offset ~comm_offset
+                    // task_struct.comm is typically at offset 0x780-0x800 on 6.12
+                    let comm_offsets: &[u64] = &[0x780, 0x798, 0x7a0, 0x7c0, 0x800, 0x880, 0x8a0];
+                    let mut process_name = alloc::format!("task_{}", pid_candidate);
+                    for &coff in comm_offsets {
+                        if let Some(cval) = mem(sp_el0 + coff) {
+                            let bytes = cval.to_le_bytes();
+                            if bytes[0].is_ascii_graphic() || bytes[0] == 0 {
+                                // Read up to 15 chars as a C string
+                                let name_chars: Vec<u8> = (0..15)
+                                    .filter_map(|i| {
+                                        let b = if i < 8 {
+                                            bytes[i]
+                                        } else {
+                                            mem(sp_el0 + coff + (i as u64 / 8) * 8)
+                                                .map(|v| v.to_le_bytes()[i as usize % 8])
+                                                .unwrap_or(0)
+                                        };
+                                        if b == 0 { None } else { Some(b) }
+                                    })
+                                    .collect();
+                                if !name_chars.is_empty() {
+                                    let s = alloc::string::String::from_utf8_lossy(&name_chars).to_string();
+                                    if s.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
+                                        process_name = s;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    return ProcessInfo {
+                        pid: Some(pid_candidate as u64),
+                        name: process_name,
+                        state: "running (kernel)".into(),
+                        is_kernel_thread: true,
+                        cpu_id: 0,
+                    };
+                }
+            }
+        }
+    }
+
+    // ── Heuristic 5: Try to read current_task from kernel global (Linux percpu) ──
+    // This is kept for ArceOS compatibility but Linux uses SP_EL0 instead.
     if let Some(sym_table) = sym {
         let current_sym_names = ["CURRENT_TASK", "current_task", "CURRENT", "current"];
         for sym_name in &current_sym_names {
             if let Some(info) = find_symbol_by_name(sym_table, sym_name) {
-                // Symbol address is the GVA of the global pointer.
-                let gpa = gva_to_gpa(sym_table.kernel_base + info.addr);
-                if let Some(arc_ptr) = mem(gpa) {
-                    // arc_ptr = heap address of TaskInner (GVA).
-                    let task_gpa = gva_to_gpa(arc_ptr);
-                    if let Some(task_id_raw) = mem(task_gpa) {
+                // Pass the GVA directly; mem() handles GVA→GPA translation.
+                let sym_gva = sym_table.kernel_base + info.addr;
+                if let Some(arc_ptr) = mem(sym_gva) {
+                    // arc_ptr = pointer to task (GVA).  Pass directly to mem().
+                    if let Some(task_id_raw) = mem(arc_ptr) {
                         let pid = task_id_raw;
                         name = alloc::format!("task_{}", pid);
                         state = "running (from current_task)".into();
@@ -176,7 +232,12 @@ fn find_symbol_by_name<'a>(sym: &'a SymbolTable, name: &str) -> Option<&'a Symbo
     sym.lookup_name(name)
 }
 
-/// Translate a Guest Virtual Address to a Guest Physical Address.
+/// Translate a Guest Virtual Address to a Guest Physical Address (guest's view).
+/// NOTE: This returns the guest's physical address (starting from 0x8000_0000),
+/// NOT the monitor's GPA.  For monitor GPA, pass GVA directly to the `mem()`
+/// closure which handles the full GVA→HPA translation internally.
+/// This function is kept for completeness but prefer using mem() directly.
+#[allow(dead_code)]
 fn gva_to_gpa(gva: u64) -> u64 {
     if gva >= PHYS_VIRT_OFFSET {
         gva.wrapping_sub(PHYS_VIRT_OFFSET)

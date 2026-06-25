@@ -20,6 +20,9 @@ const MAX_EXPORT_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 
 /// Save a file to the hypervisor's `/vmcore/` directory via HVC #11 CrashSaveFile.
 ///
+/// If the data is larger than `MAX_EXPORT_SIZE`, it is automatically split
+/// into numbered parts (e.g. `memory.bin.part0`, `memory.bin.part1`, ...).
+///
 /// # Arguments
 ///
 /// * `filename` — File name only (not path), e.g. `"vmcore_1_Panic.json"`.
@@ -27,28 +30,50 @@ const MAX_EXPORT_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 ///
 /// # Errors
 ///
-/// Returns an error description if the hypercall fails or the file is
-/// too large.
+/// Returns an error description if the hypercall fails or the filename is
+/// invalid.
 pub fn save_file_to_hypervisor(filename: &str, data: &[u8]) -> Result<(), String> {
     if data.is_empty() {
         return Ok(());
-    }
-    if data.len() > MAX_EXPORT_SIZE {
-        return Err(format!(
-            "file '{}' too large ({} > {} bytes)",
-            filename,
-            data.len(),
-            MAX_EXPORT_SIZE,
-        ));
     }
     // Reject path separators — hypervisor writes into a fixed directory.
     if filename.contains('/') || filename.contains('\\') {
         return Err(format!("filename must not contain path separators: '{}'", filename));
     }
 
+    if data.len() <= MAX_EXPORT_SIZE {
+        send_file(filename, data)
+    } else {
+        // Split large file into MAX_EXPORT_SIZE chunks.
+        let n_chunks = (data.len() + MAX_EXPORT_SIZE - 1) / MAX_EXPORT_SIZE;
+        let dot = filename.rfind('.').unwrap_or(filename.len());
+        let base = &filename[..dot];
+        let ext = &filename[dot..];
+        let mut ok_count = 0usize;
+        for (i, chunk) in data.chunks(MAX_EXPORT_SIZE).enumerate() {
+            let part_name = alloc::format!("{}.part{}{}", base, i, ext);
+            match send_file(&part_name, chunk) {
+                Ok(()) => ok_count += 1,
+                Err(e) => {
+                    ax_std::println!(
+                        "[export] chunk {}/{} failed: {}",
+                        i + 1, n_chunks, e,
+                    );
+                }
+            }
+        }
+        if ok_count == n_chunks {
+            Ok(())
+        } else {
+            Err(format!("only {}/{} chunks exported for '{}'", ok_count, n_chunks, filename))
+        }
+    }
+}
+
+/// Low-level HVC #11 call to send a single file (must be <= MAX_EXPORT_SIZE).
+fn send_file(filename: &str, data: &[u8]) -> Result<(), String> {
     let name_bytes = filename.as_bytes();
     // Hypervisor reads filename as a C string (null-terminated).
-    // Append '\0' to ensure correct termination at the guest memory boundary.
     let name_buf = alloc::vec::Vec::from_iter(
         name_bytes.iter().copied().chain(core::iter::once(0u8)),
     );

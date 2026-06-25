@@ -7,6 +7,7 @@
 extern crate alloc;
 use alloc::format;
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::capture::storage::VmcoreFile;
@@ -71,7 +72,7 @@ pub fn analyze(
 
     // Step 2 — Identify the crashing process.
     let process = primary_vcpu
-        .map(|regs| crate::recovery::process::identify(regs, &backtrace, sym, &(|_| None)))
+        .map(|regs| crate::recovery::process::identify(regs, &backtrace, sym, mem))
         .unwrap_or(ProcessInfo {
             pid: None,
             name: "<unknown>".into(),
@@ -141,6 +142,57 @@ pub fn analyze(
         generate_diagnosis(&vmcore.crash_event, crash_pc, crash_function.as_deref(), &backtrace)
     };
 
+    // Step 5 — Fallback: if FP unwind gave <=1 valid frame, try to extract backtrace from dmesg.
+    let backtrace_valid = backtrace.len() > 1
+        && backtrace.last().map_or(false, |f| {
+            // Valid frames have PC in the kernel address space,
+            // not in the 0xfffffffffffffffc range or 0.
+            (f.pc >= 0xffff_0000_0000_0000u64 && f.pc < 0xffff_8001_0000_0000u64)
+                || f.pc == 0 // 0 means dmesg-extracted (no PC available)
+        });
+    let backtrace = if !backtrace_valid {
+        let log_text = get_log_text(vmcore);
+        if let Some(ref text) = log_text {
+            let dmesg_bt = extract_backtrace_from_dmesg(text, sym);
+            if dmesg_bt.len() > 1 {
+                ax_std::println!("[recovery] backtrace extracted from dmesg ({} frames)", dmesg_bt.len());
+                dmesg_bt
+            } else if dmesg_bt.len() == 1 {
+                ax_std::println!("[recovery] backtrace from dmesg (1 frame)");
+                dmesg_bt
+            } else {
+                backtrace
+            }
+        } else {
+            backtrace
+        }
+    } else {
+        backtrace
+    };
+
+    // Step 6 — Fallback: if PID is None, try to extract from dmesg.
+    let process = if process.pid.is_none() {
+        let log_text = get_log_text(vmcore);
+        if let Some(ref text) = log_text {
+            let (pid, comm) = extract_pid_from_dmesg(text);
+            if pid.is_some() {
+                ProcessInfo {
+                    pid,
+                    name: comm.unwrap_or_else(|| process.name.clone()),
+                    state: process.state.clone(),
+                    is_kernel_thread: process.is_kernel_thread,
+                    cpu_id: process.cpu_id,
+                }
+            } else {
+                process
+            }
+        } else {
+            process
+        }
+    } else {
+        process
+    };
+
     AnalysisResult {
         analysis_version: "1.0".into(),
         crash_event: vmcore.crash_event.clone(),
@@ -154,6 +206,23 @@ pub fn analyze(
         possible_causes,
         key_registers,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Dmesg text helpers
+// ---------------------------------------------------------------------------
+
+/// Get the kernel log text from the vmcore (either inline or from separate log file).
+fn get_log_text(vmcore: &VmcoreFile) -> Option<String> {
+    vmcore.kernel_log.as_ref().map(|s| s.clone())
+        .or_else(|| {
+            let log_file = alloc::format!(
+                "/vmcore/vmcore_{}_{}.log",
+                vmcore.timestamp,
+                vmcore.crash_event,
+            );
+            ax_std::fs::read_to_string(&log_file).ok()
+        })
 }
 
 /// Try to extract ESR and FAR from kernel log (dmesg) text.
@@ -193,6 +262,175 @@ fn extract_esr_far_from_dmesg(dmesg: &str) -> (u64, u64) {
         .unwrap_or(0);
 
     (esr, far)
+}
+
+/// Helper: strip the kernel log timestamp prefix `[...]` from a line.
+/// Returns the line content after the timestamp, or the original line if no
+/// timestamp is found.
+fn strip_timestamp(line: &str) -> &str {
+    let t = line.trim();
+    if t.starts_with('[') {
+        if let Some(end) = t.find(']') {
+            let after = t[end + 1..].trim();
+            if !after.is_empty() {
+                return after;
+            }
+        }
+    }
+    t
+}
+
+/// Try to extract the kernel backtrace (Call trace) from dmesg text.
+///
+/// The Linux kernel prints a "Call trace:" section during Oops output:
+/// ```text
+/// [    0.123456] Call trace:
+/// [    0.123456]  crash_null+0x28/0x40
+/// [    0.123456]  execute_crash+0x14/0x30
+/// ```
+///
+/// Each line has the format: ` func_name+offset/length` (optional `[module]`).
+fn extract_backtrace_from_dmesg(dmesg: &str, sym: Option<&SymbolTable>) -> Vec<StackFrame> {
+    let mut frames: Vec<StackFrame> = Vec::new();
+    let mut in_call_trace = false;
+    let kernel_base = sym.map(|s| s.kernel_base).unwrap_or(0);
+
+    for line in dmesg.lines() {
+        let content = strip_timestamp(line);
+        let trimmed = content.trim();
+
+        // Detect "Call trace:" (case-insensitive)
+        if trimmed.eq_ignore_ascii_case("Call trace:") || trimmed.eq_ignore_ascii_case("Call Trace:") {
+            in_call_trace = true;
+            continue;
+        }
+
+        if in_call_trace {
+            // Stop at empty line or next section header (line contains colon, no +).
+            if trimmed.is_empty() || (trimmed.contains(':') && !trimmed.contains('+')) {
+                break;
+            }
+
+            // Parse: ` func_name+0xXX/0xYY [module]`
+            // Extract module name from trailing [module_name]
+            let (core, _module_suffix) = trimmed.split_once(" [")
+                .map(|(c, m)| {
+                    let m = m.trim_end_matches(']');
+                    (c, Some(m.to_string()))
+                })
+                .unwrap_or((trimmed, None));
+
+            let func_name = core.split('+').next()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| core.to_string());
+
+            // Extract offset from offset/length (e.g. "+172/0x200")
+            let func_offset = core.split('+').nth(1)
+                .and_then(|part| part.split('/').next())
+                .and_then(|off_str| u64::from_str_radix(off_str.trim_start_matches("0x"), 16).ok());
+
+            // Only add frames with recognizable function names
+            if !func_name.is_empty() && (func_name.contains('_') || func_name.as_bytes().first().map_or(false, |c| c.is_ascii_alphabetic())) {
+                // Try to resolve PC from kallsyms.
+                // Module symbols are stored as "func_name [module_name]" in kallsyms.
+                let pc = sym.and_then(|s| {
+                    // Try exact name first (kernel symbols)
+                    s.lookup_name(&func_name)
+                        // If not found, try with module suffix
+                        .or_else(|| {
+                            _module_suffix.as_ref().and_then(|mod_name| {
+                                let full_name = alloc::format!("{} [{}]", func_name, mod_name);
+                                s.lookup_name(&full_name)
+                            })
+                        })
+                        .map(|info| {
+                            let sym_addr = info.addr;
+                            kernel_base + sym_addr + func_offset.unwrap_or(0)
+                        })
+                }).unwrap_or(0);
+
+                frames.push(StackFrame {
+                    pc,
+                    sp: 0,
+                    fp: 0,
+                    func_name: Some(func_name),
+                    func_offset,
+                });
+            }
+        }
+    }
+
+    frames
+}
+
+/// Try to extract PID and process name from dmesg text.
+///
+/// The Linux kernel prints during Oops:
+/// ```text
+/// [    0.123456] CPU: 0 PID: 42 Comm: insmod Not tainted 6.12.94 #1
+/// ```
+fn extract_pid_from_dmesg(dmesg: &str) -> (Option<u64>, Option<String>) {
+    for line in dmesg.lines() {
+        let content = strip_timestamp(line);
+        let line_str = content.trim();
+
+        // Match lines containing both "CPU:" and "PID:" (or just "PID:" / "Comm:")
+        // Kernel format: "CPU: 0 PID: 42 Comm: insmod Not tainted 6.12.94 #1"
+        // After whitespace split: ["CPU:", "0", "PID:", "42", "Comm:", "insmod", ...]
+        if line_str.starts_with("CPU:") || line_str.contains("PID:") || line_str.contains("Comm:") {
+            let tokens: Vec<&str> = line_str.split_whitespace().collect();
+            let mut pid: Option<u64> = None;
+            let mut comm: Option<String> = None;
+
+            // Walk tokens looking for PID: / Comm: followed by their value
+            for i in 0..tokens.len() {
+                if tokens[i] == "PID:" {
+                    if i + 1 < tokens.len() {
+                        pid = tokens[i + 1].parse::<u64>().ok();
+                    }
+                } else if tokens[i] == "Comm:" {
+                    if i + 1 < tokens.len() {
+                        comm = Some(tokens[i + 1].to_string());
+                    }
+                } else if let Some(rest) = tokens[i].strip_prefix("PID:") {
+                    if !rest.is_empty() {
+                        pid = rest.parse::<u64>().ok();
+                    } else if i + 1 < tokens.len() {
+                        pid = tokens[i + 1].parse::<u64>().ok();
+                    }
+                } else if let Some(rest) = tokens[i].strip_prefix("Comm:") {
+                    if !rest.is_empty() {
+                        comm = Some(rest.to_string());
+                    } else if i + 1 < tokens.len() {
+                        comm = Some(tokens[i + 1].to_string());
+                    }
+                }
+            }
+
+            if pid.is_some() {
+                return (pid, comm);
+            }
+        }
+
+        // Also try "Process: name (pid: 42)" format
+        if line_str.starts_with("Process:") {
+            let parts: Vec<&str> = line_str.splitn(3, ' ').collect();
+            if parts.len() >= 2 {
+                let name = parts[1].to_string();
+                let pid = if parts.len() >= 3 {
+                    let rest = parts[2].trim_start_matches('(');
+                    rest.trim_end_matches(')')
+                        .strip_prefix("pid:")
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                } else {
+                    None
+                };
+                return (pid, Some(name));
+            }
+        }
+    }
+
+    (None, None)
 }
 
 /// Generate human-readable diagnosis from the analyzed data.

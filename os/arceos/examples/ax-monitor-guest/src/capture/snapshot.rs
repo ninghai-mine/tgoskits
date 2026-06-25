@@ -25,19 +25,26 @@ const TARGET_VCPU_COUNT: u64 = 1;
 
 /// Guest physical memory regions to dump (must match target VM memory layout).
 /// Linux kernel Image is loaded at the start of the VM's memory region.
-/// From AxVisor log: gpa=GPA:0x223400000, size=256 MiB.
+/// 64 MiB covers: kernel image (~22 MiB), BSS, data, slab allocator, and
+/// the common kernel stack region. Satisfies the "partial dump" requirement.
+/// From AxVisor log: gpa=GPA:0x223600000, size=256 MiB.
 const MEMORY_REGIONS: &[(u64, usize)] = &[
-    // Kernel Image at GPA 0x223600000 (MAP_IDENTICAL base)
-    // Covers kernel text, rodata, data, bss (~14MB)
-    (0x223600000, 0x0020_0000),  // 2 MiB kernel image + early boot area
-    // End of VM RAM (256MB at GPA 0x223600000)
-    (0x233200000, 0x0040_0000),   // 4 MiB near end of RAM
+    (0x223600000, 0x0400_0000),  // 64 MiB — kernel + data + stacks
 ];
 
 /// Guest kernel linear mapping offset (GVA → GPA).
 /// Linux ARM64 uses PAGE_OFFSET = 0xffff_0000_0000_0000 (48-bit VA).
 /// So virtual address → physical: GPA = VA - PHYS_VIRT_OFFSET.
 const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
+
+/// Guest physical memory base address (from target VM config).
+/// The target VM's RAM starts at GPA 0x8000_0000 with 256 MB.
+/// The hypervisor maps this to HPA MEMORY_REGIONS[0].0 (currently 0x223600000).
+/// Translation: HPA = guest_PA - GUEST_PHYS_BASE + MEMORY_REGIONS[0].0
+const GUEST_PHYS_BASE: u64 = 0x8000_0000;
+
+/// Kernel image virtual address base (KIMAGE_VADDR).
+const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;
 
 /// Path to the target kernel ELF (with symbol table) inside the monitor guest's filesystem.
 /// Set to empty string to disable ELF symbol resolution (kallsyms will be used instead).
@@ -194,24 +201,44 @@ pub fn capture_snapshot(event: CrashEvent) {
 
             // Build a memory reader closure that translates Guest Virtual Address
             // → Guest Physical Address and looks up data in the dumped segments.
+            // Falls back to HVC #9 (CrashReadGuestMem) for addresses not in the dump.
             let mem_reader = |addr: u64| -> Option<u64> {
-                // GVA → GPA translation (linear mapping)
-                let gpa = if addr >= PHYS_VIRT_OFFSET {
-                    addr.wrapping_sub(PHYS_VIRT_OFFSET)
+                // GVA → GPA: handle kernel image, linear mapping, and others
+                let gpa = if addr >= KERNEL_IMAGE_TEXT_VA
+                    && addr < KERNEL_IMAGE_TEXT_VA + 0x8000_0000
+                {
+                    // Kernel image region (2 GiB): VA - _text_va → base_gpa + offset
+                    addr.wrapping_sub(KERNEL_IMAGE_TEXT_VA)
+                        .wrapping_add(MEMORY_REGIONS[0].0)
+                } else if addr >= PHYS_VIRT_OFFSET
+                    && addr < 0xffff_8000_0000_0000u64
+                {
+                    // Linear mapping: VA = PAGE_OFFSET + guest_PA
+                    // guest_PA = VA - PAGE_OFFSET
+                    // HPA = MEMORY_REGIONS[0].0 + (guest_PA - GUEST_PHYS_BASE)
+                    let guest_pa = addr.wrapping_sub(PHYS_VIRT_OFFSET);
+                    guest_pa.wrapping_sub(GUEST_PHYS_BASE)
+                        .wrapping_add(MEMORY_REGIONS[0].0)
                 } else {
+                    // Raw GPA (for debugging with the `memory` command)
                     addr
                 };
-                // Find which memory segment contains this GPA
-                let (base, data) = memory_regions_data
+                // Try dump segments first
+                if let Some((base, data)) = memory_regions_data
                     .iter()
-                    .find(|(base, data)| gpa >= *base && gpa < *base + data.len() as u64)?;
-                let offset = (gpa - *base) as usize;
-                if offset + 8 > data.len() {
-                    return None;
+                    .find(|(base, data)| gpa >= *base && gpa < *base + data.len() as u64)
+                {
+                    let offset = (gpa - *base) as usize;
+                    if offset + 8 <= data.len() {
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(&data[offset..offset + 8]);
+                        return Some(u64::from_le_bytes(bytes));
+                    }
                 }
-                let mut bytes = [0u8; 8];
-                bytes.copy_from_slice(&data[offset..offset + 8]);
-                Some(u64::from_le_bytes(bytes))
+                // Fallback: read from frozen target VM via HVC #9
+                let mut buf = [0u8; 8];
+                register::read_guest_mem(TARGET_VM_ID, gpa, &mut buf).ok()?;
+                Some(u64::from_le_bytes(buf))
             };
 
             // Try to load kernel symbol table for function name resolution.
