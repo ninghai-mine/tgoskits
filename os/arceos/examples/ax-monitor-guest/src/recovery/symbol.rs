@@ -65,7 +65,13 @@ impl SymbolTable {
             Err(i) => i - 1,
         };
         let sym = &self.symbols[idx];
-        if adjusted >= sym.addr && adjusted < sym.addr + sym.size { Some(sym) } else { None }
+        // kallsyms does not provide symbol size (size == 0), so we match
+        // any address >= sym.addr (up to the next symbol, caught by binary search).
+        if adjusted >= sym.addr && (sym.size == 0 || adjusted < sym.addr + sym.size) {
+            Some(sym)
+        } else {
+            None
+        }
     }
 
     pub fn nearest(&self, addr: u64) -> Option<&SymbolInfo> {

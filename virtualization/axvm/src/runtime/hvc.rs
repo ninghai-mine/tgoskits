@@ -513,21 +513,24 @@ impl HyperCall {
                 let guest_far = self.args[2];
                 info!("VM[{}] HyperCall GuestPanic — guest panic notification, guest ESR={:#x} FAR={:#x}", vm_id, guest_esr, guest_far);
 
-                // Override crash registers with the ESR/FAR values that
-                // the guest read and passed via x1/x2.  The guest reads
-                // ESR_EL1/FAR_EL1 at panic time — these are the original
-                // hardware exception values set when the fault occurred.
-                // The HVC trap frame's own ESR_EL2 reflects only the HVC
-                // instruction (EC=0x16, ISS=0), which is useless for
-                // crash analysis.
+                // Lock crash registers and handle ESR/FAR correctly:
+                //
+                //   Data Abort path (e.g. NULL pointer):
+                //     exception.rs already called capture_crash_regs() when the
+                //     DataAbortLowerEL was handled (ESR_EL1=0x96xxxxxx). At this
+                //     point crash_locked=1, so the call below is a no-op and the
+                //     real ESR/FAR are preserved — do NOT override.
+                //
+                //   Software-initiated panic (SysRq, BUG()):
+                //     No hardware exception occurred; crash_locked=0.  The HVC's
+                //     ESR_EL2 (EC=0x16, ISS=0) is locked and then overridden to 0
+                //     to indicate "no hardware fault".
                 #[cfg(target_arch = "aarch64")]
                 for vcpu in self.vm.vcpu_list() {
                     let arch_vcpu = vcpu.get_arch_vcpu();
-                    arch_vcpu.ctx.capture_crash_regs();
-                    // Override the locked (HVC-syndrome) values with the
-                    // guest-reported ESR/FAR.
-                    if arch_vcpu.ctx.crash_locked() != 0 {
-                        arch_vcpu.ctx.override_crash_esr_far(guest_esr, guest_far);
+                    if arch_vcpu.ctx.crash_locked() == 0 {
+                        arch_vcpu.ctx.capture_crash_regs();
+                        arch_vcpu.ctx.override_crash_esr_far(0, 0);
                     }
                 }
                 #[cfg(not(target_arch = "aarch64"))]

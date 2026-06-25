@@ -107,14 +107,38 @@ pub fn analyze(
         })
     });
 
-    // 优先使用 ESR/FAR 解码，否则降级到 event-based 诊断
-    let (summary, possible_causes) = match primary_vcpu {
-        Some(regs) if regs.esr_el1 != 0 => {
-            decode_esr(regs.esr_el1, regs.far_el1, crash_function.as_deref())
+    // 优先使用 ESR/FAR 解码；如果 HVC #13 未传递真实值（ESR=0），
+    // 尝试从 dmesg 文本中正则提取 ESR/FAR。
+    // storage.rs 将 kernel_log 存为单独 .log 文件，JSON 中为 None
+    let (esr, far) = {
+        let log_text = vmcore.kernel_log.as_deref().map(|s| alloc::string::String::from(s))
+            .or_else(|| {
+                let log_file = alloc::format!("/vmcore/vmcore_{}_{}.log", vmcore.timestamp, vmcore.crash_event);
+                ax_std::fs::read_to_string(&log_file).ok()
+            });
+        match (primary_vcpu, log_text) {
+            (Some(regs), _) if regs.esr_el1 != 0 => (regs.esr_el1, regs.far_el1),
+            (_, Some(ref text)) => extract_esr_far_from_dmesg(text),
+            _ => (0, 0),
         }
-        _ => {
-            generate_diagnosis(&vmcore.crash_event, crash_pc, crash_function.as_deref(), &backtrace)
+    };
+    // 更新 key_registers 中的 ESR/FAR 为最终用于诊断的值
+    let key_registers = {
+        let mut kr = key_registers;
+        for (name, val) in kr.iter_mut() {
+            if *name == "ESR_EL1" { *val = esr; }
+            if *name == "FAR_EL1" { *val = far; }
         }
+        kr
+    };
+
+    let (summary, possible_causes) = if esr != 0 {
+        // 有真实 ESR/FAR：decode_esr 给出精准异常解码，再加事件上下文
+        let (esr_summary, esr_causes) = decode_esr(esr, far, crash_function.as_deref());
+        let ctx_summary = generate_diagnosis(&vmcore.crash_event, crash_pc, crash_function.as_deref(), &backtrace).0;
+        (alloc::format!("{} — {}", esr_summary, ctx_summary), esr_causes)
+    } else {
+        generate_diagnosis(&vmcore.crash_event, crash_pc, crash_function.as_deref(), &backtrace)
     };
 
     AnalysisResult {
@@ -130,6 +154,45 @@ pub fn analyze(
         possible_causes,
         key_registers,
     }
+}
+
+/// Try to extract ESR and FAR from kernel log (dmesg) text.
+///
+/// For hardware-triggered panics (NULL pointer, Data Abort) the kernel
+/// prints ESR and FAR before calling panic().  When HVC #13 delivers
+/// ESR=0 (because the hardware exception was handled in EL1 and never
+/// reached the hypervisor), this function provides a fallback by parsing
+/// the prb dump text.
+///
+/// Returns `(esr, far)`, both 0 if parsing fails (software-triggered
+/// panic like SysRq or BUG()).
+fn extract_esr_far_from_dmesg(dmesg: &str) -> (u64, u64) {
+    // ESR 行: "  ESR = 0x0000000096000044"  (prb 污染可能末尾附多余字符)
+    let esr = dmesg
+        .lines()
+        .find(|l| l.contains("ESR"))
+        .and_then(|l| {
+            l.split_once("0x")
+                .and_then(|(_, hex)| {
+                    let clean: String = hex.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+                    // 截断到前 16 位（64-bit），防 prb 污染
+                    u64::from_str_radix(&clean[..clean.len().min(16)], 16).ok()
+                })
+        })
+        .unwrap_or(0);
+
+    // FAR 行: "at virtual address 0000000000000000" (无 0x，无前缀)
+    let far = dmesg
+        .lines()
+        .find(|l| l.contains("virtual address"))
+        .and_then(|l| {
+            let after = l.split_once("virtual address").map(|(_, s)| s).unwrap_or("");
+            let clean: String = after.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            u64::from_str_radix(&clean[..clean.len().min(16)], 16).ok()
+        })
+        .unwrap_or(0);
+
+    (esr, far)
 }
 
 /// Generate human-readable diagnosis from the analyzed data.
