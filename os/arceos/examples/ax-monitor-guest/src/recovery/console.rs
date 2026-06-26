@@ -118,6 +118,12 @@ fn cmd_info(result: &AnalysisResult) {
     }
     ax_std::println!("  Summary:   {}", result.summary);
     ax_std::println!("  Process:   {} (PID: {:?})", result.process.name, result.process.pid);
+    if !result.dstruct_result.details.is_empty() {
+        ax_std::println!("  ── Data-structure checks ──");
+        for detail in &result.dstruct_result.details {
+            ax_std::println!("    • {}", detail);
+        }
+    }
 }
 
 fn cmd_dmesg(vmcore: &VmcoreFile) {

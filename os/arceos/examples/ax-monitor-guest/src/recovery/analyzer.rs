@@ -11,6 +11,7 @@ use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::capture::storage::VmcoreFile;
+use crate::recovery::dstruct::{check_dstructs, DstructResult};
 use crate::recovery::process::ProcessInfo;
 use crate::recovery::symbol::SymbolTable;
 use crate::recovery::unwind::{unwind_stack, StackFrame};
@@ -41,6 +42,8 @@ pub struct AnalysisResult {
     pub possible_causes: Vec<String>,
     /// Key registers at crash time (PC, SP, LR, PSR).
     pub key_registers: Vec<(String, u64)>,
+    /// Data-structure sanity checks (stack, current_task, preempt, etc.).
+    pub dstruct_result: DstructResult,
 }
 
 /// Run the full analysis pipeline on a loaded vmcore.
@@ -170,6 +173,20 @@ pub fn analyze(
         backtrace
     };
 
+    // Step 5c — Data-structure sanity checks.
+    let dstruct_result = primary_vcpu
+        // Pass the dmesg-extracted ESR if register ESR is 0, so that
+        // exception-nesting detection sees the real exception class.
+        .map(|regs| check_dstructs(regs, sym, mem, if esr != 0 { Some(esr) } else { None }))
+        .unwrap_or(DstructResult {
+            sp_in_stack: None,
+            current_task_valid: None,
+            irqs_masked: None,
+            exception_nested: None,
+            sp_aligned: None,
+            details: alloc::vec![],
+        });
+
     // Step 6 — Fallback: if PID is None, try to extract from dmesg.
     let process = if process.pid.is_none() {
         let log_text = get_log_text(vmcore);
@@ -205,6 +222,7 @@ pub fn analyze(
         summary,
         possible_causes,
         key_registers,
+        dstruct_result,
     }
 }
 

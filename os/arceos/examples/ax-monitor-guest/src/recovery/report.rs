@@ -49,7 +49,13 @@ pub fn generate_markdown(analysis: &AnalysisResult) -> String {
     }
 
     // Data-structure sanity checks.
-    // (dstruct_check field removed — not yet implemented for Linux targets)
+    if !analysis.dstruct_result.details.is_empty() {
+        md.push_str("\n## Data-Structure Checks\n\n");
+        for detail in &analysis.dstruct_result.details {
+            md.push_str(&format!("- {}\n", detail));
+        }
+        md.push('\n');
+    }
 
     md
 }

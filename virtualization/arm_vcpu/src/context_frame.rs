@@ -40,21 +40,19 @@ pub struct Aarch64ContextFrame {
     pub elr: u64,
     /// The saved program status register, which holds the state of the program at the time of an exception.
     pub spsr: u64,
-    /// The exception syndrome register (ESR_EL1) of the Guest, saved at each VM exit.
-    /// We save ESR_EL1 (not ESR_EL2) because ESR_EL1 retains its value from the Guest's
-    /// original exception (e.g., Data Abort), while ESR_EL2 is overwritten on every VM exit.
+    /// The exception syndrome register (ESR_EL2), saved at each VM exit.
+    ///   - bit[31:26]: Exception Class (EC)
+    ///   - bit[24:0]:  Instruction Specific Syndrome (ISS)
     pub esr_el2: u64,
-    /// The fault address register (FAR_EL1) of the Guest, saved at each VM exit.
-    /// Same rationale as esr_el2 — we save FAR_EL1, not FAR_EL2.
+    /// The fault address register (FAR_EL2), saved at each VM exit.
+    ///   - Data Abort: the virtual address that caused the fault
     pub far_el2: u64,
 
-    /// Locked crash ESR — captured on first crash-class exception
-    /// (Data/Instruction Abort) and NOT overwritten by subsequent VM exits (方案B).
+    /// Locked crash ESR_EL2 — captured on first crash-class exception (Data/Instruction Abort)
+    /// and NOT overwritten by subsequent VM exits (方案B).
     /// Also captured as fallback by CrashFreezeGuest (方案D).
-    /// NOTE: stores ESR_EL1 (Guest's original exception), not ESR_EL2.
     pub crash_esr_el2: u64,
-    /// Locked crash FAR — captured together with `crash_esr_el2`.
-    /// NOTE: stores FAR_EL1 (Guest's original fault address), not FAR_EL2.
+    /// Locked crash FAR_EL2 — captured together with `crash_esr_el2`.
     pub crash_far_el2: u64,
     /// Lock flag: once non-zero, `crash_esr_el2`/`crash_far_el2` are frozen.
     pub crash_locked: u64,
@@ -170,10 +168,6 @@ impl Aarch64ContextFrame {
         }
     }
 
-    /// Returns the (ESR_EL2, FAR_EL2) pair.
-    ///
-    /// If crash registers are locked, returns the captured crash values;
-    /// otherwise returns the current (last VM exit) values.
     /// Returns whether crash registers have been locked.
     pub fn crash_locked(&self) -> u64 {
         self.crash_locked

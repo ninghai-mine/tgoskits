@@ -28,13 +28,9 @@
     mrs     x11, spsr_el2
     stp     x10, x11, [sp, 32 * 8]
 
-    # Save `esr_el1` and `far_el1` into `Aarch64VCpu.ctx`
-    # These are the Guest's EL1 exception syndrome registers.
-    # We save EL1 (not EL2) because ESR_EL1/FAR_EL1 persist across
-    # VM exits — they are written by the Guest's Data Abort BEFORE
-    # the trap to EL2, and are NOT overwritten by the EL2 trap.
-    mrs     x12, esr_el1
-    mrs     x13, far_el1
+    # Save `esr_el2` and `far_el2` into `Aarch64VCpu.ctx`
+    mrs     x12, esr_el2
+    mrs     x13, far_el2
     stp     x12, x13, [sp, 34 * 8]
 .endm
 
