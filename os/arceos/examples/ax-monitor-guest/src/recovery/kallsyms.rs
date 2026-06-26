@@ -171,7 +171,7 @@ pub fn read_kallsyms(
 
         symbols.push(SymbolInfo {
             name,
-            addr,
+            addr,  // absolute VA — kernel_base=0 in from_sorted_symbols
             size: 0,
         });
     }

@@ -74,34 +74,38 @@ pub fn gva_to_gpa(
             level, idx, entry_pa, pte, desc_type);
 
         match desc_type {
-            0 => {
+            0b00 => {
                 ax_std::println!("[page_table]   → invalid (level {}), stopping", level);
                 return None;
             }
-            1 => {
-                if level >= LEVELS - 1 {
-                    return None;
-                }
-                table_pa = pte & 0xFFFF_FFFF_F000u64;
-                ax_std::println!("[page_table]   → table, next PA={:#x}", table_pa);
-            }
-            2 => {
+            0b01 => {
+                // Block descriptor (valid at levels 1, 2 only)
                 if level == 0 || level >= LEVELS - 1 {
                     return None;
                 }
                 let block_size = if level == 1 { 1u64 << 30 } else { 1u64 << 21 };
                 let pa = (pte & !(block_size - 1)) | (gva & (block_size - 1));
-                ax_std::println!("[page_table]   → block ({}), GPA={:#x}", 
+                ax_std::println!("[page_table]   → block ({}), GPA={:#x}",
                     if level == 1 { "1GiB" } else { "2MiB" }, pa);
                 return Some(pa);
             }
-            3 => {
-                if level != LEVELS - 1 { return None; }
-                let pa = (pte & 0xFFFF_FFFF_F000u64) | (gva & 0xFFF);
-                ax_std::println!("[page_table]   → page (4KiB), GPA={:#x}", pa);
-                return Some(pa);
+            0b11 => {
+                // Table descriptor (levels 0-2) or Page descriptor (level 3)
+                if level == LEVELS - 1 {
+                    // Page descriptor (4 KiB)
+                    let pa = (pte & 0xFFFF_FFFF_F000u64) | (gva & 0xFFF);
+                    ax_std::println!("[page_table]   → page (4KiB), GPA={:#x}", pa);
+                    return Some(pa);
+                } else {
+                    // Table descriptor — points to next-level table
+                    table_pa = pte & 0xFFFF_FFFF_F000u64;
+                    ax_std::println!("[page_table]   → table, next PA={:#x}", table_pa);
+                }
             }
-            _ => unreachable!(),
+            _ => {  // 0b10 = reserved
+                ax_std::println!("[page_table]   → reserved encoding (level {}), stopping", level);
+                return None;
+            }
         }
     }
 
@@ -153,9 +157,10 @@ pub fn find_pgd_pa(
             let field_gpa = mm_gpa.wrapping_add(off);
             if let Some(val) = read_64(field_gpa) {
                 let pa = val & 0xFFFF_FFFF_F000u64;
-                // Sanity: valid page table must be 4K-aligned in RAM range.
-                // Target VM RAM is at 0x223600000 .. 0x233600000 (256 MiB).
-                if pa >= 0x223600000 && pa < 0x233600000 {
+                // Sanity: valid page table must be 4K-aligned and in a plausible RAM range.
+                // Use the locate module's HPA_BASE to determine the valid range.
+                let hpa_base = crate::capture::locate::get_hpa_base().unwrap_or(0x223000000);
+                if pa >= hpa_base && pa < hpa_base + 0x20000000 && (pa & 0xFFF) == 0 {
                     ax_std::println!("[page_table] init_mm.pgd @ offset {:#x} → GPA {:#x}", off, pa);
                     return Ok(pa);
                 }
@@ -167,19 +172,13 @@ pub fn find_pgd_pa(
     Err("neither swapper_pg_dir nor init_mm found in kallsyms".into())
 }
 
-/// Translate a kernel-image GVA to GPA using the standard formula.
+/// Translate a kernel-image GVA to GPA using the locate module.
 fn pgd_gva_to_gpa(pgd_gva: u64) -> Result<u64, String> {
-    const KIMAGE_VADDR: u64 = 0xffff_8000_8000_0000;
-    const DUMP_BASE: u64 = 0x223600000; // MEMORY_REGIONS[0].0
-
-    if pgd_gva >= KIMAGE_VADDR && pgd_gva < KIMAGE_VADDR + 0x8000_0000 {
-        Ok(pgd_gva - KIMAGE_VADDR + DUMP_BASE)
-    } else if pgd_gva >= 0xffff_0000_0000_0000u64 {
-        // Linear mapping fallback (should not happen for PGD, but be safe).
-        let guest_pa = pgd_gva.wrapping_sub(0xffff_0000_0000_0000u64);
-        Ok(guest_pa.wrapping_sub(0x8000_0000).wrapping_add(DUMP_BASE))
+    let gpa = crate::capture::locate::va_to_hpa(pgd_gva);
+    if gpa > 0x10000000 {
+        Ok(gpa)
     } else {
-        Err(format!("pgd GVA {:#x} is not in kernel image range", pgd_gva))
+        Err(format!("pgd GVA {:#x} → HPA {:#x} (suspiciously low)", pgd_gva, gpa))
     }
 }
 

@@ -435,13 +435,12 @@ fn probe_module_name(
     read_gva: &impl Fn(u64) -> Option<u64>,
 ) -> Option<(u64 /* module_base */, String /* name */)> {
     // Candidate (list_offset, name_offset) pairs for Linux 6.x ARM64.
+    // Extracted via: pahole -C module vmlinux
+    // struct module { state(0..4); list(8..24); name(24..80); ... mem[7](320..824) }
     const CANDIDATES: &[(u64, u64)] = &[
-        (0x08, 0x38), (0x08, 0x48),
+        (0x08, 0x18),  // Linux 6.12 aarch64 confirmed
+        (0x08, 0x38), (0x08, 0x48),  // older kernels / other arch
         (0x10, 0x40), (0x10, 0x48), (0x10, 0x50),
-        (0x18, 0x48), (0x18, 0x50), (0x18, 0x58),
-        (0x20, 0x50), (0x20, 0x58), (0x20, 0x60),
-        (0x28, 0x58), (0x28, 0x60),
-        (0x00, 0x30), (0x00, 0x40),
     ];
 
     for &(list_off, name_off) in CANDIDATES {
@@ -494,19 +493,35 @@ fn is_valid_module_name(name: &str) -> bool {
 }
 
 /// Try to read the module's kernel-virtual base address and size from
-/// `struct module`.  Returns `(0, 0)` if the offsets are unknown (the
-/// caller will still have the module name for display).
+/// `struct module`.  Probes candidate offsets for `core_layout.base`
+/// and `core_layout.size`.
 fn probe_module_addr(
-    _module_base: u64,
-    _read_gva: &impl Fn(u64) -> Option<u64>,
+    module_base_gva: u64,
+    read_gva: &impl Fn(u64) -> Option<u64>,
 ) -> (u64, usize) {
-    // The base address is stored in `struct module.module_core` or
-    // `struct module.core_layout.base`.  The exact offset varies by
-    // kernel version; we return (0,0) for now.
-    //
-    // The dmesg backtrace already provides function names (e.g.
-    // `crash_init+116`), and the list walk above gives the module
-    // name, which is sufficient for crash analysis.
+    /// struct module_memory { base:0..8; size:8..12; mtn:16..72 }; sizeof=72
+    /// struct module { ... mem[7]:320..824; ... sizeof=1256 (Linux 6.12 aarch64)
+    const CORE_LAYOUT_OFFSETS: &[u64] = &[
+        0x140,  // Linux 6.12 aarch64 confirmed: mem[0] at offset 320
+        0x128, 0x130, 0x138,  // other kernel versions
+        0x148, 0x150, 0x158, 0x160,
+        0x168, 0x170, 0x178, 0x180, 0x188, 0x190,
+    ];
+
+    for &off in CORE_LAYOUT_OFFSETS {
+        let base_gva = module_base_gva.wrapping_add(off);
+        let size_gva = module_base_gva.wrapping_add(off + 8);
+
+        if let (Some(base), Some(size_val)) = (read_gva(base_gva), read_gva(size_gva)) {
+            let size = (size_val as u32) as usize; // lower 32 bits = core_layout.size
+            // Sanity: base must be a kernel vmalloc address, size > 0 and < 128MB.
+            if base >= 0xffff_0000_0000_0000u64 && size > 0 && size < 128 * 1024 * 1024 {
+                ax_std::println!("[modules] probe_addr: off={:#x} base={:#x} size={}",
+                    off, base, size);
+                return (base, size);
+            }
+        }
+    }
     (0, 0)
 }
 

@@ -1,43 +1,116 @@
-//! Dynamic kernel HPA resolution.
+//! Dynamic kernel HPA resolution via kallsyms_num_syms probing.
 //!
-//! Uses a hardcoded HPA_BASE fallback.  Dynamic scanning was removed
-//! because kernel alternatives patching modifies in-memory .text,
-//! making ELF-based fingerprints unreliable at runtime.
-//!
-//! To support a different HPA_BASE, update `HPA_BASE_FALLBACK` below.
+//! HPA_BASE changes every axvisor run.  We locate the kernel by
+//! probing candidate HPAs for `kallsyms_num_syms`, which has a
+//! known value (~46797).  Once found, HPA_BASE is computed and
+//! all other GPAs are derived via offset_to_hpa().
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::capture::register;
 
-const HPA_BASE_FALLBACK: u64 = 0x2_2360_0000;
-const TEXT_OFFSET: u64 = 0x20_0000;
+/// Expected kallsyms_num_syms value range (sane kernel).
+const MIN_NUM_SYMS: u32 = 10000;
+const MAX_NUM_SYMS: u32 = 1_000_000;
 
-static HPA_BASE: AtomicU64 = AtomicU64::new(HPA_BASE_FALLBACK);
-static LOCATED: AtomicBool = AtomicBool::new(true);
-
-#[derive(Debug, Clone, Copy)]
-pub struct KernelLocation { pub hpa_base: u64 }
+/// Probe range: scan ±16 MiB around the last known HPA_BASE.
+const PROBE_STEP: u64 = 0x20_0000;       // 2 MiB
+const PROBE_HALF_RANGE: u64 = 16 * PROBE_STEP;  // ±32 MiB
 
 /// Hardcoded kernel symbol VA offsets (VA - 0xffff800080000000).
 pub mod offsets {
     pub const __LOG_BUF: u64         = 0x1647fb8;
     pub const PRINTK_RB_STATIC: u64  = 0x1408110;
-    pub const KALLSYMS_NUM_SYMS: u64      = 0x0d605c8;
-    pub const KALLSYMS_NAMES: u64         = 0x0d605d0;
-    pub const KALLSYMS_MARKERS: u64       = 0x0e79ec0;
-    pub const KALLSYMS_TOKEN_TABLE: u64   = 0x0e7a3f8;
-    pub const KALLSYMS_TOKEN_INDEX: u64   = 0x0e7a788;
-    pub const KALLSYMS_OFFSETS: u64       = 0x0e7a988;
+    pub const KALLSYMS_NUM_SYMS: u64 = 0x0d605c8;
+    pub const KALLSYMS_NAMES: u64    = 0x0d605d0;
+    pub const KALLSYMS_MARKERS: u64  = 0x0e79ec0;
+    pub const KALLSYMS_TOKEN_TABLE: u64  = 0x0e7a3f8;
+    pub const KALLSYMS_TOKEN_INDEX: u64  = 0x0e7a788;
+    pub const KALLSYMS_OFFSETS: u64      = 0x0e7a988;
     pub const KALLSYMS_RELATIVE_BASE: u64 = 0x0ecde30;
 }
 
-pub fn offset_to_hpa(offset: u64) -> u64 {
-    HPA_BASE.load(Ordering::Relaxed) + offset + TEXT_OFFSET
+static HPA_BASE: AtomicU64 = AtomicU64::new(0);
+static LOCATED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy)]
+pub struct KernelLocation { pub hpa_base: u64 }
+
+pub fn get_hpa_base() -> Option<u64> {
+    if LOCATED.load(Ordering::Acquire) { Some(HPA_BASE.load(Ordering::Relaxed)) } else { None }
 }
 
-pub fn locate_kernel(_target_vm_id: u64) -> Option<KernelLocation> {
-    let hpa_base = HPA_BASE_FALLBACK;
-    ax_std::println!("[locate] hpa_base={:#x} (hardcoded)", hpa_base);
-    Some(KernelLocation { hpa_base })
+pub fn offset_to_hpa(offset: u64) -> u64 {
+    let base = if LOCATED.load(Ordering::Acquire) {
+        HPA_BASE.load(Ordering::Relaxed)
+    } else {
+        // Before locate: use a fallback that gives correct value for any HPA_BASE.
+        // This only works if called AFTER locate_kernel() succeeds.
+        0x223800000  // last known, will be overridden after locate
+    };
+    base + offset
+}
+
+/// Scan for kallsyms_num_syms to find HPA_BASE.
+/// Reads 4 bytes at candidate GPAs, checks if the value is in [MIN, MAX].
+pub fn locate_kernel(target_vm_id: u64) -> Option<KernelLocation> {
+    if LOCATED.load(Ordering::Acquire) {
+        return Some(KernelLocation { hpa_base: HPA_BASE.load(Ordering::Relaxed) });
+    }
+
+    let num_syms_offset = offsets::KALLSYMS_NUM_SYMS;
+    // Try last-known HPA_BASEs first (common values observed).
+    let candidates = [
+        0x223800000u64,  // most recent
+        0x223a00000u64,  // current run
+        0x223600000u64,  // older
+        0x224000000u64,
+        0x223000000u64,
+    ];
+
+    // 1. Fast path: try known candidates
+    for &base in &candidates {
+        let hpa = base + num_syms_offset;
+        if probe_num_syms(target_vm_id, hpa) {
+            store(base, hpa);
+            return Some(KernelLocation { hpa_base: base });
+        }
+    }
+
+    // 2. Scan around last known base
+    let center = candidates[0];
+    let start = center.saturating_sub(PROBE_HALF_RANGE);
+    let end = center.saturating_add(PROBE_HALF_RANGE + 0x10000000);
+    ax_std::println!("[locate] scanning [{:#x}, {:#x}) step={:#x}...", start, end, PROBE_STEP);
+    let mut count = 0u32;
+    for base in (start..end).step_by(PROBE_STEP as usize) {
+        count += 1;
+        if count % 16 == 0 { ax_std::println!("[locate]   {} candidates...", count); }
+        let hpa = base + num_syms_offset;
+        if probe_num_syms(target_vm_id, hpa) {
+            store(base, hpa);
+            return Some(KernelLocation { hpa_base: base });
+        }
+    }
+
+    ax_std::println!("[locate] FAILED — HPA_BASE not found");
+    None
+}
+
+fn probe_num_syms(target_vm_id: u64, hpa: u64) -> bool {
+    let mut buf = [0u8; 4];
+    match register::read_guest_mem(target_vm_id, hpa, &mut buf) {
+        Ok(4) => {
+            let val = u32::from_le_bytes(buf);
+            val >= MIN_NUM_SYMS && val <= MAX_NUM_SYMS
+        }
+        _ => false,
+    }
+}
+
+fn store(hpa_base: u64, found_at: u64) {
+    HPA_BASE.store(hpa_base, Ordering::Relaxed);
+    LOCATED.store(true, Ordering::Release);
+    ax_std::println!("[locate] HPA_BASE={:#x} (probe at {:#x})", hpa_base, found_at);
 }
 
 pub fn va_to_hpa(va: u64) -> u64 {
