@@ -144,7 +144,11 @@ fn cmd_modules(vmcore: &VmcoreFile) {
     }
     ax_std::println!("Loaded kernel modules:");
     for m in &vmcore.modules {
-        ax_std::println!("  {:<20} @ {:#018x} ({} bytes)", m.name, m.base_addr, m.size);
+        if m.base_addr != 0 {
+            ax_std::println!("  {:<20} @ {:#018x} ({} bytes)", m.name, m.base_addr, m.size);
+        } else {
+            ax_std::println!("  {}", m.name);
+        }
     }
 }
 

@@ -29,7 +29,10 @@ const TARGET_VCPU_COUNT: u64 = 1;
 /// the common kernel stack region. Satisfies the "partial dump" requirement.
 /// From AxVisor log: gpa=GPA:0x223600000, size=256 MiB.
 const MEMORY_REGIONS: &[(u64, usize)] = &[
-    (0x223600000, 0x0400_0000),  // 64 MiB — kernel + data + stacks
+    // Two 64 MiB regions (instead of one 128 MiB) to avoid exceeding the
+    // per-allocation limit of ArceOS's heap allocator.
+    (0x223600000, 0x0400_0000),  // 64 MiB — lower half
+    (0x227600000, 0x0400_0000),  // 64 MiB — upper half
 ];
 
 /// Guest kernel linear mapping offset (GVA → GPA).
@@ -162,8 +165,14 @@ pub fn capture_snapshot(event: CrashEvent) {
         }
     };
 
-    // Step 4: Collect loaded kernel module information via HVC #9.
-    let modules = match modules::collect_modules(TARGET_VM_ID, None) {
+    // Step 4: Collect loaded kernel modules.
+    // Strategy A: scan the dumped memory for ELF headers and extract module
+    // names from .modinfo sections.
+    let dump_refs: Vec<(u64, &[u8])> = memory_regions_data
+        .iter()
+        .map(|(base, data)| (*base, data.as_slice()))
+        .collect();
+    let mut modules = match modules::collect_modules(TARGET_VM_ID, None, &|_| None, &dump_refs) {
         Ok(result) => {
             ax_std::println!(
                 "[capture] modules: {} found (method: {})",
@@ -181,6 +190,31 @@ pub fn capture_snapshot(event: CrashEvent) {
         }
     };
 
+    // Strategy B: extract module names from the kernel log (dmesg).
+    // The kernel prints function+offset [module_name] in the Call trace.
+    if let Some(ref log) = kernel_log {
+        for line in log.lines() {
+            // Look for " [module_name]" suffix in backtrace lines
+            if let Some(start) = line.find(" [") {
+                let bracket = &line[start..];
+                if bracket.ends_with(']') {
+                    let name = bracket[2..bracket.len() - 1].trim();
+                    if !name.is_empty()
+                        && !modules.iter().any(|m| m.name == name)
+                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    {
+                        ax_std::println!("[capture] module '{}' found via dmesg", name);
+                        modules.push(modules::ModuleInfo {
+                            name: name.to_string(),
+                            base_addr: 0,
+                            size: 0,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     let snapshot = CrashSnapshot {
         event,
         vcpu_regs,
@@ -191,11 +225,11 @@ pub fn capture_snapshot(event: CrashEvent) {
 
     ax_std::println!("[capture] snapshot captured");
 
-    // Step 5: Save vmcore to persistent storage.
+    // Step 6: Save vmcore to persistent storage.
     if let Ok(vmcore_path) = storage::save_vmcore(&snapshot) {
         ax_std::println!("[capture] vmcore saved at: {}", vmcore_path);
 
-        // Step 6: Load vmcore and run recovery analysis.
+        // Step 7: Load vmcore and run recovery analysis.
         if let Some(vmcore) = storage::load_vmcore(&vmcore_path) {
             ax_std::println!("[recovery] starting crash analysis...");
 
@@ -241,10 +275,9 @@ pub fn capture_snapshot(event: CrashEvent) {
                 Some(u64::from_le_bytes(buf))
             };
 
-            // Try to load kernel symbol table for function name resolution.
-            // Priority: kallsyms (from frozen VM memory) > embedded ELF > None
+            // Load kallsyms symbol table from frozen target VM for function
+            // name resolution in backtrace / analysis.
             let sym = 'load: {
-                // Try kallsyms first (reads from frozen target VM via HVC #9)
                 if let Some(ref addrs) = KALLSYMS_ADDRS {
                     match kallsyms::read_kallsyms(
                         TARGET_VM_ID,

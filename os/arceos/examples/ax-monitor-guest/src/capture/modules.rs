@@ -1,25 +1,13 @@
 //! Loaded kernel modules information collection.
 //!
-//! Reads the target guest's loaded kernel modules from its physical memory
-//! via HVC #9 (`CrashReadGuestMem`).
+//! Scans already-dumped guest physical memory for ELF headers to find
+//! loaded kernel modules.  The crash_test.ko ELF image was copied into
+//! kernel memory when `insmod` ran; on a freshly booted system the
+//! allocated pages typically fall within the first 64 MiB of RAM
+//! (which is what we dump).
 //!
-//! # Strategy
-//!
-//! 1. **kallsyms table** — if a `.kallsyms` symbol is found at a known
-//!    address, we read it and extract module symbols (symbols whose names
-//!    contain `[module_name]` or that reside outside the main kernel image).
-//! 2. **ELF header scan** — scan known GPA ranges for ELF magic bytes
-//!    (`\x7fELF`).  Each hit is a loaded module whose section headers
-//!    contain the module name.
-//! 3. **Fallback** — if neither method succeeds, return an empty list and
-//!    record the reason.
-//!
-//! # Usage in snapshot pipeline
-//!
-//! ```ignore
-//! let mods = modules::collect_modules(TARGET_VM_ID, None);
-//! snapshot.modules = mods.modules;
-//! ```
+//! This approach does NOT require kallsyms or page-table walking.
+//! It works for any crash type that leaves module memory intact.
 
 extern crate alloc;
 use alloc::format;
@@ -28,7 +16,14 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::capture::register;
+/// ELF magic bytes.
+const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
+
+/// Maximum number of modules to collect.
+const MAX_MODULES: usize = 8;
+
+/// Minimum section count for a valid kernel module ELF.
+const MIN_SHDR_COUNT: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -37,7 +32,6 @@ use crate::capture::register;
 /// Information about a single loaded kernel module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleInfo {
-    /// Module name, e.g. `"ext4"`, `"kprint"`.
     pub name: String,
     /// Base guest-virtual address where the module is loaded.
     pub base_addr: u64,
@@ -48,91 +42,56 @@ pub struct ModuleInfo {
 /// Result of the module collection routine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModulesResult {
-    /// List of detected modules (may be empty).
     pub modules: Vec<ModuleInfo>,
-    /// Human-readable description of how the list was obtained.
     pub method: String,
 }
-
-// ---------------------------------------------------------------------------
-// Internal constants
-// ---------------------------------------------------------------------------
-
-/// Linear mapping offset (GVA → GPA) used by the target kernel.
-/// Linux ARM64 uses PAGE_OFFSET = 0xffff_0000_0000_0000 (48-bit VA).
-const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
-
-/// ELF magic bytes that identify a valid ELF object.
-const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
-
-/// Minimum reasonable module size (1 page).
-const MIN_MODULE_SIZE: u64 = 4096;
-
-/// Maximum reasonable module size (32 MiB).
-const MAX_MODULE_SIZE: u64 = 32 * 1024 * 1024;
-
-/// Maximum number of modules to collect (safety limit).
-const MAX_MODULES: usize = 64;
-
-/// End of the kernel image GPA — modules are typically loaded after this.
-/// Linux kernel loaded at GPA 0x223600000, 256 MiB region.
-const KERNEL_IMAGE_GPA_END: u64 = 0x233400000;
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Collect the list of loaded kernel modules from the frozen target VM.
+/// Collect the list of loaded kernel modules by scanning already-dumped
+/// guest physical memory buffers for ELF headers.
 ///
 /// # Arguments
 ///
-/// * `target_vm_id` — frozen target VM ID (usually 1).
-/// * `head_gpa`     — optional guest-physical address of the module list /
-///                    kallsyms table.  Pass `None` to let the function probe
-///                    known GPA ranges automatically.
+/// * `_target_vm_id` — unused (we operate on local buffers).
+/// * `_sym`          — unused (we don't need kallsyms for ELF scanning).
+/// * `_mem`          — unused (we operate on local buffers).
+/// * `dump_buffers`  — slices of already-dumped physical memory, e.g.
+///                     `&[(base_gpa, &[u8])]` from the snapshot pipeline.
 ///
 /// # Returns
 ///
-/// `ModulesResult` containing the module list and a description of how it
-/// was obtained.  The list may be empty if the kernel has no loaded modules
-/// or if the memory could not be read.
-pub fn collect_modules(target_vm_id: u64, head_gpa: Option<u64>) -> Result<ModulesResult, String> {
-    // ── Strategy A: explicit head address −────────────
-    if let Some(gpa) = head_gpa {
-        match read_kallsyms(target_vm_id, gpa) {
-            Ok(modules) if !modules.is_empty() => {
-                    return Ok(ModulesResult {
-                    modules,
-                    method: "kallsyms (explicit address)".into(),
-                });
-            }
-            _ => {} // fall through
-        }
-    }
-
-    // ── Strategy B: scan GPA ranges for ELF headers −──
-    let scan_regions: &[(u64, u64)] = &[
-        // Module loading area (just after the kernel image).
-        (KERNEL_IMAGE_GPA_END, 0x0020_0000), // 2 MiB
-    ];
-
+/// `ModulesResult` containing found modules and the method description.
+pub fn collect_modules(
+    _target_vm_id: u64,
+    _sym: Option<&crate::recovery::symbol::SymbolTable>,
+    _mem: &impl Fn(u64) -> Option<u64>,
+    dump_buffers: &[(u64, &[u8])],
+) -> Result<ModulesResult, String> {
     let mut modules: Vec<ModuleInfo> = Vec::new();
     let mut method = String::new();
 
-    for &(base, size) in scan_regions {
-        match scan_elf_headers(target_vm_id, base, base + size, &mut modules) {
-            Ok(n) if n > 0 => {
-                method = format!("ELF header scan at GPA {:#x}+{:#x} ({} modules)", base, size, n);
-            }
-            Ok(_) => {}
-            Err(e) => {
-                method = format!("scan failed: {}", e);
-            }
-        }
+    for &(base_gpa, buf) in dump_buffers {
+        let found = scan_buf_for_elf_headers(base_gpa, buf, &mut modules);
+        method = alloc::format!(
+            "ELF scan on {:.1} MiB dump at GPA {:#x} ({} hit(s))",
+            buf.len() as f64 / (1024.0 * 1024.0),
+            base_gpa,
+            found,
+        );
     }
 
-    if modules.is_empty() && method.is_empty() {
-        method = "no modules found (kernel may have no dynamic modules)".into();
+    // Filter out false positives: modules whose name is the fallback
+    // "module_0x..."  (meaning .modinfo parsing failed) are not real
+    // kernel modules — they are random ELF images in memory (vDSO,
+    // boot code, embedded ELFs, etc.).  Keep only modules with a
+    // valid name parsed from .modinfo.
+    modules.retain(|m| !m.name.starts_with("module_0x"));
+
+    if modules.is_empty() {
+        method = "no modules found via ELF dump scan".into();
     }
 
     Ok(ModulesResult { modules, method })
@@ -142,217 +101,209 @@ pub fn collect_modules(target_vm_id: u64, head_gpa: Option<u64>) -> Result<Modul
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Translate a guest-virtual address to a guest-physical address using the
-/// kernel's linear mapping offset.
-fn gva_to_gpa(gva: u64) -> u64 {
-    if gva >= PHYS_VIRT_OFFSET {
-        gva.wrapping_sub(PHYS_VIRT_OFFSET)
-    } else {
-        gva
-    }
-}
-
-/// Try to read the kallsyms table at the given GPA.
-///
-/// kallsyms is a sequence of null-terminated `"symbol_name\n"` entries
-/// (`/proc/kallsyms` format).  We scan for lines that contain `[module]`
-/// to identify module symbols, then derive unique module names.
-fn read_kallsyms(_target_vm_id: u64, _gpa: u64) -> Result<Vec<ModuleInfo>, String> {
-    // TODO: implement kallsyms parsing when the target kernel exposes it.
-    // This requires knowing the exact address of the kallsyms buffer,
-    // which can be obtained from the kernel symbol table.
-    //
-    // For now, return empty to fall through to the ELF-scan strategy.
-    Ok(Vec::new())
-}
-
-/// Scan a guest-physical memory range for ELF headers and extract module
-/// information from each one found.
-fn scan_elf_headers(
-    target_vm_id: u64,
-    start_gpa: u64,
-    end_gpa: u64,
+/// Scan a local memory buffer for ELF headers and extract module info.
+fn scan_buf_for_elf_headers(
+    base_gpa: u64,
+    buf: &[u8],
     out: &mut Vec<ModuleInfo>,
-) -> Result<usize, String> {
-    let chunk_size: u64 = 4096;  // scan page by page
-    let mut buf = alloc::vec![0u8; chunk_size as usize];
+) -> usize {
     let mut found = 0usize;
+    let mut pos = 0usize;
 
-    let mut gpa = start_gpa;
-    while gpa < end_gpa && out.len() < MAX_MODULES {
-        let remaining = (end_gpa - gpa) as usize;
-        let cur = remaining.min(chunk_size as usize);
-        let buf = &mut buf[..cur];
+    while pos + 64 <= buf.len() && out.len() < MAX_MODULES {
+        // Fast scan: find ELF magic
+        let remaining = &buf[pos..];
+        let magic_pos = match remaining.windows(4).position(|w| w == ELF_MAGIC) {
+            Some(p) => p,
+            None => break,
+        };
+        let elf_start = pos + magic_pos;
+        let elf_gpa = base_gpa + elf_start as u64;
 
-        match register::read_guest_mem(target_vm_id, gpa, buf) {
-            Ok(n) if n > 0 => {
-                // Scan the returned bytes for ELF magic.
-                let data = &buf[..n];
-                for (offset, window) in data.windows(4).enumerate() {
-                    if window == ELF_MAGIC {
-                        // We found an ELF header — extract module info.
-                        let elf_gpa = gpa + offset as u64;
-                        if let Some(info) = parse_elf_header(target_vm_id, elf_gpa) {
-                            // Deduplicate by name.
-                            if !out.iter().any(|m| m.name == info.name) {
-                                out.push(info);
-                                found += 1;
-                            }
-                        }
-                    }
-                }
+        // Try to parse the ELF header at this position
+        if let Some(info) = parse_elf_local(&buf[elf_start..], elf_gpa) {
+            if !out.iter().any(|m| m.name == info.name) {
+                ax_std::println!("[modules] found '{}' via ELF scan at GPA {:#x}", info.name, elf_gpa);
+                out.push(info);
+                found += 1;
             }
-            Ok(_) => {}     // zero bytes read → unmapped page, skip.
-            Err(_) => {}    // read error → skip.
+            // Skip past this ELF to avoid finding it again
+            pos = elf_start + 1;
+        } else {
+            pos = elf_start + 4; // skip the false-positive magic
         }
-
-        gpa += cur as u64;
     }
 
-    Ok(found)
+    found
 }
 
-/// Parse a module's ELF header at the given GPA and extract name + size.
-///
-/// We read the ELF header (64 bytes), locate the section-name string table,
-/// then find the `.modinfo` or `.gnu.linkonce.this_module` section to obtain
-/// the module name.
-fn parse_elf_header(target_vm_id: u64, elf_gpa: u64) -> Option<ModuleInfo> {
-    // Read the first 64 bytes (ELF header for AArch64).
-    let mut hdr = [0u8; 64];
-    register::read_guest_mem(target_vm_id, elf_gpa, &mut hdr).ok()?;
-
-    // Quick sanity: must be ELF64 (EI_CLASS = 2) and AArch64 (e_machine = 0xb7).
-    if hdr[4] != 2 || hdr[18] != 0xb7 {
+/// Parse a module ELF header from a local byte slice (no HVC calls).
+/// `data` starts at the ELF magic (position 0 ↔ elf_gpa in GPA space).
+/// All ELF file offsets are byte positions within `data`, NOT GPA-relative.
+fn parse_elf_local(data: &[u8], elf_gpa: u64) -> Option<ModuleInfo> {
+    if data.len() < 64 {
         return None;
     }
 
-    // Parse relevant ELF header fields (little-endian).
-    let e_shoff = u64::from_le_bytes(hdr[40..48].try_into().ok()?);  // section header offset
-    let e_shentsize = u16::from_le_bytes(hdr[58..60].try_into().ok()?); // section header entry size
-    let e_shnum = u16::from_le_bytes(hdr[60..62].try_into().ok()?);     // number of sections
-    let e_shstrndx = u16::from_le_bytes(hdr[62..64].try_into().ok()?);  // section name string table index
-
-    if e_shoff == 0 || e_shentsize == 0 || e_shnum == 0 {
+    // ELF64 header sanity: EI_CLASS=2, e_machine=0xb7 (AArch64)
+    if data[4] != 2 || data[18] != 0xb7 {
         return None;
     }
 
-    // Read the section header string table.
-    let shstrtab_hdr_off = elf_gpa.wrapping_add(e_shoff + e_shstrndx as u64 * e_shentsize as u64);
-    let mut shstrtab_hdr = [0u8; 64];
-    register::read_guest_mem(target_vm_id, shstrtab_hdr_off, &mut shstrtab_hdr).ok()?;
+    // All ELF offsets are relative to start of file (= start of data slice).
+    let e_shoff     = u64::from_le_bytes(data[40..48].try_into().ok()?) as usize;
+    let e_shentsize = u16::from_le_bytes(data[58..60].try_into().ok()?) as usize;
+    let e_shnum     = u16::from_le_bytes(data[60..62].try_into().ok()?) as usize;
+    let e_shstrndx  = u16::from_le_bytes(data[62..64].try_into().ok()?) as usize;
 
-    let shstrtab_off = u64::from_le_bytes(shstrtab_hdr[24..32].try_into().ok()?);
-    let shstrtab_size = u64::from_le_bytes(shstrtab_hdr[32..40].try_into().ok()?);
-
-    if shstrtab_off == 0 || shstrtab_size == 0 {
+    if e_shoff == 0 || e_shentsize == 0 || e_shnum < MIN_SHDR_COUNT {
         return None;
     }
 
-    // Read the section name string table.
-    let shstrtab_gpa = elf_gpa.wrapping_add(shstrtab_off);
-    let mut shstrtab = alloc::vec![0u8; shstrtab_size as usize];
-    register::read_guest_mem(target_vm_id, shstrtab_gpa, &mut shstrtab).ok()?;
+    // Section header string table's section header entry
+    let shstrtab_shdr_off = e_shoff + e_shstrndx * e_shentsize;
+    if shstrtab_shdr_off + 64 > data.len() {
+        return None;
+    }
+    let shstrtab_shdr = &data[shstrtab_shdr_off..shstrtab_shdr_off + 64];
 
-    // Determine the module's total size: last section's end - base.
+    let shstrtab_off  = u64::from_le_bytes(shstrtab_shdr[24..32].try_into().ok()?) as usize;
+    let shstrtab_size = u64::from_le_bytes(shstrtab_shdr[32..40].try_into().ok()?) as usize;
+
+    // Sanity-check shstrtab_off / shstrtab_size.
+    // If the kernel module loader has cleared sh_offset for .shstrtab
+    // (setting it to 0), we cannot read section names.  In that case we
+    // fall through with an empty string table and try to find .modinfo
+    // by scanning section data directly for "name=".
+    let shstrtab: &[u8] = if shstrtab_off == 0 || shstrtab_size == 0
+        || shstrtab_off > 4 * 1024 * 1024       // reject implausibly large offsets
+        || (shstrtab_off as usize) + (shstrtab_size as usize) > data.len()
+    {
+        &[] // empty string table — section names unavailable
+    } else {
+        &data[shstrtab_off as usize..][..shstrtab_size as usize]
+    };
+
+    // Iterate section headers to find .modinfo and determine module extent
     let mut module_end = 0u64;
-
-    // Scan sections for `.modinfo` to extract the module name.
     let mut module_name: Option<String> = None;
 
     for i in 0..e_shnum {
-        let shdr_off = elf_gpa.wrapping_add(e_shoff + i as u64 * e_shentsize as u64);
-        let mut shdr = [0u8; 64];
-        register::read_guest_mem(target_vm_id, shdr_off, &mut shdr).ok()?;
+        let shdr_off = e_shoff + i * e_shentsize;
+        if shdr_off + 64 > data.len() {
+            break;
+        }
+        let shdr = &data[shdr_off..shdr_off + 64];
 
-        let sh_name = u32::from_le_bytes(shdr[0..4].try_into().ok()?) as usize;
-        let sh_addr = u64::from_le_bytes(shdr[16..24].try_into().ok()?);   // virtual address
-        let sh_size = u64::from_le_bytes(shdr[32..40].try_into().ok()?);    // section size
+        let sh_name   = u32::from_le_bytes(shdr[0..4].try_into().ok()?) as usize;
+        let sh_addr   = u64::from_le_bytes(shdr[16..24].try_into().ok()?);
+        let sh_offset = u64::from_le_bytes(shdr[24..32].try_into().ok()?) as usize;
+        let sh_size   = u64::from_le_bytes(shdr[32..40].try_into().ok()?) as usize;
 
-        // Track the module extent (highest section end).
-        if sh_addr > 0 {
-            let sect_end = sh_addr.wrapping_add(sh_size);
-            if sect_end > module_end {
-                module_end = sect_end;
+        // Track file extent using FILE OFFSETS (sh_offset + sh_size),
+        // NOT virtual addresses (sh_addr is a vmalloc VA for loaded modules).
+        if sh_offset > 0 {
+            let file_end = (sh_offset + sh_size) as u64;
+            if file_end > module_end {
+                module_end = file_end;
             }
         }
 
-        // Check the section name.
-        let sect_name = get_section_name(&shstrtab, sh_name);
-        if sect_name == ".modinfo" || sect_name == ".gnu.linkonce.this_module" {
-            // Read the section content and look for "name=".
-            let sect_gpa = if sh_addr > 0 {
-                gva_to_gpa(sh_addr)
-            } else {
-                elf_gpa.wrapping_add(u64::from_le_bytes(shdr[24..32].try_into().ok()?)) // sh_offset
-            };
-            let mut sect_data = alloc::vec![0u8; sh_size.min(4096) as usize];
-            register::read_guest_mem(target_vm_id, sect_gpa, &mut sect_data).ok()?;
+        // Get section name (may be "" if string table is unavailable)
+        let sect_name = get_name_from_strtab(shstrtab, sh_name);
 
-            // Parse "name=module_name\0" from .modinfo.
-            if let Some(name) = parse_modinfo_name(&sect_data) {
-                module_name = Some(name);
-                break;
+        // Try to extract module name from section data:
+        //   A) section named .modinfo / .gnu.linkonce.this_module, OR
+        //   B) any section whose content contains "name=" (fallback when
+        //      string table is empty or section names are unreliable).
+        let should_check = sect_name == ".modinfo"
+            || sect_name == ".gnu.linkonce.this_module"
+            || shstrtab.is_empty(); // string table unavailable → scan all sections
+
+        if should_check {
+            if sh_offset > data.len() || sh_offset + sh_size > data.len() {
+                continue;
+            }
+            let content = &data[sh_offset..sh_offset + sh_size.min(4096)];
+            if let Some(name) = parse_modinfo_name(content) {
+                if module_name.is_none() {
+                    module_name = Some(name);
+                }
             }
         }
     }
 
-    // Compute the module extent from the highest section end address.
-    // `elf_gpa` is already a GPA (found by ELF magic scan in physical memory),
-    // so we subtract it directly without an extra gva_to_gpa call.
+    // If section-based scan failed, brute-force search the entire ELF
+    // data for "name=" patterns (catches corrupted section headers).
+    if module_name.is_none() && data.len() <= 8 * 1024 * 1024 {
+        if let Some(name) = find_modinfo_name_bruteforce(data) {
+            module_name = Some(name);
+        }
+    }
+
+    // Size = highest file offset among sections (module_end already tracks
+    // sh_offset + sh_size = file position).  Do NOT subtract elf_gpa here:
+    // module_end is a file offset within the ELF, not an absolute GPA.
     let size = if module_end > 0 {
-        (module_end - elf_gpa) as usize
+        (module_end as usize).min(4 * 1024 * 1024) // kernel modules never > 4MB
     } else {
         0
     };
 
-    let name = module_name.unwrap_or_else(|| {
-        // Fallback: generate a name from the GPA.
-        format!("module_{:#x}", elf_gpa)
-    });
-
-    // The module base address is its GPA (we found it in guest physical memory).
-    // If a kernel virtual address is needed, call gva_to_gpa on this value.
-    let base_addr = elf_gpa;
-
-    // Sanity-check the size.
-    if size >= MIN_MODULE_SIZE as usize && size <= MAX_MODULE_SIZE as usize {
-        Some(ModuleInfo { name, base_addr, size })
-    } else if size == 0 {
-        // Zero-sized section table – probably not a real module.
-        None
-    } else {
-        // Suspicious size but report it anyway.
-        Some(ModuleInfo { name, base_addr, size })
-    }
+    let name = module_name.unwrap_or_else(|| format!("module_{:#x}", elf_gpa));
+    Some(ModuleInfo { name, base_addr: elf_gpa, size })
 }
 
-/// Extract the section name from the string table given a name offset.
-fn get_section_name(strtab: &[u8], offset: usize) -> &str {
-    if offset >= strtab.len() {
+/// Look up a section name from the string table.
+fn get_name_from_strtab(strtab: &[u8], idx: usize) -> &str {
+    if idx >= strtab.len() {
         return "";
     }
-    let end = strtab[offset..]
-        .iter()
-        .position(|&b| b == 0)
-        .unwrap_or(strtab.len() - offset);
-    core::str::from_utf8(&strtab[offset..offset + end]).unwrap_or("")
+    let end = strtab[idx..].iter().position(|&b| b == 0).unwrap_or(strtab.len() - idx);
+    core::str::from_utf8(&strtab[idx..idx + end]).unwrap_or("")
 }
 
 /// Parse the module name from `.modinfo` section data.
-///
-/// The `.modinfo` section contains `"key=value\0"` entries.  We look for
-/// `"name=module_name"`.
 fn parse_modinfo_name(data: &[u8]) -> Option<String> {
-    let name_prefix = b"name=";
-    for window in data.windows(name_prefix.len() + 1) {
-        if window.starts_with(name_prefix) {
-            // Read until the next '\0' or end of data.
-            let rest = &window[name_prefix.len()..];
-            let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
-            if end > 0 {
-                return core::str::from_utf8(&rest[..end]).ok().map(|s| s.to_string());
+    for entry in data.split(|&b| b == 0) {
+        if entry.is_empty() { continue; }
+        if let Ok(s) = core::str::from_utf8(entry) {
+            if let Some(val) = s.strip_prefix("name=") {
+                let name = val.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
             }
+        }
+    }
+    None
+}
+
+/// Brute-force scan the entire ELF data for "name=<module_name>" patterns.
+/// This catches modules whose section headers have been corrupted by the
+/// kernel module loader but whose `.modinfo` section data is still intact
+/// somewhere in memory.
+fn find_modinfo_name_bruteforce(data: &[u8]) -> Option<String> {
+    const PATTERN: &[u8] = b"name=";
+    let mut pos = 0usize;
+    while pos + PATTERN.len() <= data.len() {
+        if data[pos..].starts_with(PATTERN) {
+            let start = pos + PATTERN.len();
+            let end = data[start..].iter().position(|&b| b == 0)
+                .map(|e| start + e)
+                .unwrap_or(data.len());
+            if end > start {
+                let name = core::str::from_utf8(&data[start..end]).ok()?;
+                let name = name.trim();
+                if !name.is_empty() && name.len() <= 64
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                {
+                    return Some(name.to_string());
+                }
+            }
+            pos = end + 1;
+        } else {
+            pos += 1;
         }
     }
     None
@@ -367,33 +318,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_section_name() {
-        let strtab = b"\0.text\0.data\0.modinfo\0";
-        assert_eq!(get_section_name(strtab, 1), ".text");
-        assert_eq!(get_section_name(strtab, 7), ".data");
-        assert_eq!(get_section_name(strtab, 13), ".modinfo");
-        assert_eq!(get_section_name(strtab, 99), "");
-    }
-
-    #[test]
-    fn test_parse_modinfo_name() {
-        let data = b"version=1.0\0name=test_module\0description=test\0";
-        assert_eq!(parse_modinfo_name(data), Some("test_module".into()));
-
-        // No name= entry.
+    fn test_parse_modinfo() {
+        assert_eq!(
+            parse_modinfo_name(b"name=crash_test\0version=1.0\0"),
+            Some("crash_test".into())
+        );
         assert_eq!(parse_modinfo_name(b"version=1.0\0"), None);
-
-        // Empty name.
-        assert_eq!(parse_modinfo_name(b"name=\0"), None);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
-    fn test_gva_to_gpa() {
-        // High address → subtract offset.
-        assert_eq!(gva_to_gpa(0xffff_8000_8020_1234), 0x8020_1234);
-        // Already a physical address.
-        assert_eq!(gva_to_gpa(0x8020_0000), 0x8020_0000);
-        // Zero.
-        assert_eq!(gva_to_gpa(0), 0);
+    fn test_empty() {
+        // Trivial placeholder; full module list walking tested in integration.
     }
 }

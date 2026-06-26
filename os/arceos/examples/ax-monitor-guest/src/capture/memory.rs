@@ -26,7 +26,8 @@ pub fn dump_memory_regions(target_vm_id: u64, regions: &[(u64, usize)]) -> Resul
         ax_std::println!("[memory] dumping VM[{}] region GPA={:#x} size={}",
                          target_vm_id, base, size);
         let chunk_size = MAX_HVC_READ_SIZE.min(size);
-        let max_buf = size.min(64 * 1024 * 1024); // cap at 64 MiB
+        // Each region is at most 64 MiB (we split 128 MiB into two chunks).
+        let max_buf = size.min(64 * 1024 * 1024);
         let mut region_data = Vec::with_capacity(max_buf);
 
         let mut offset = 0usize;
