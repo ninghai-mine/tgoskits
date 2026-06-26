@@ -57,6 +57,31 @@ impl SymbolTable {
         Ok(SymbolTable { symbols, kernel_base })
     }
 
+    /// Load from compact binary format (nm -n extracted function symbols).
+    /// Format: u32 count, u64 kernel_base, then count × (u64 addr, u32 name_off),
+    /// followed by null-terminated string table.
+    pub fn from_compact_bytes(data: &[u8]) -> Result<Self, String> {
+        if data.len() < 12 { return Err("symtab: too small".into()); }
+        let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        let kernel_base = u64::from_le_bytes([data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11]]);
+        let hdr = 12usize; let esz = 12usize;
+        let idx_end = hdr + count * esz;
+        if data.len() < idx_end { return Err(format!("symtab: truncated")); }
+        let mut symbols = Vec::with_capacity(count);
+        for i in 0..count {
+            let off = hdr + i * esz;
+            let addr = u64::from_le_bytes([data[off],data[off+1],data[off+2],data[off+3],data[off+4],data[off+5],data[off+6],data[off+7]]);
+            let name_off = u32::from_le_bytes([data[off+8],data[off+9],data[off+10],data[off+11]]) as usize;
+            let s = idx_end + name_off;
+            let mut e = s;
+            while e < data.len() && data[e] != 0 { e += 1; }
+            let name = core::str::from_utf8(&data[s..e]).unwrap_or("<invalid>").to_string();
+            symbols.push(SymbolInfo { name, addr, size: 0 });
+        }
+        ax_std::println!("[symbol] loaded {} symbols from embedded symtab ({} KB)", symbols.len(), data.len()/1024);
+        Ok(SymbolTable { symbols, kernel_base })
+    }
+
     pub fn lookup(&self, addr: u64) -> Option<&SymbolInfo> {
         let adjusted = addr.wrapping_sub(self.kernel_base);
         let idx = match self.symbols.binary_search_by_key(&adjusted, |s| s.addr) {
@@ -91,4 +116,12 @@ impl SymbolTable {
 
     pub fn len(&self) -> usize { self.symbols.len() }
     pub fn is_empty(&self) -> bool { self.symbols.is_empty() }
+
+    /// Look up a symbol by exact name and return its absolute VA.
+    /// Returns `None` if not found.
+    pub fn find_va(&self, name: &str) -> Option<u64> {
+        self.symbols.iter()
+            .find(|s| s.name == name)
+            .map(|s| self.kernel_base + s.addr)
+    }
 }

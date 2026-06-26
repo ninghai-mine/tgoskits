@@ -116,6 +116,16 @@ fn cmd_info(result: &AnalysisResult) {
         let off = result.crash_function_offset.map(|o| format!("+{}", o)).unwrap_or_default();
         ax_std::println!("  Function:  {}{}", func, off);
     }
+    if result.esr_el1 != 0 {
+        let esr_decode = crate::recovery::analyzer::decode_esr(
+            result.esr_el1, result.far_el1, result.crash_function.as_deref()
+        ).0;
+        ax_std::println!("  ESR_EL1:   {:#018x}  ({})", result.esr_el1, esr_decode);
+        if result.far_el1 != 0 {
+            ax_std::println!("  FAR_EL1:   {:#018x}", result.far_el1);
+        }
+    }
+    ax_std::println!("  Detail:    {}", result.crash_detail);
     ax_std::println!("  Summary:   {}", result.summary);
     ax_std::println!("  Process:   {} (PID: {:?})", result.process.name, result.process.pid);
     if !result.dstruct_result.details.is_empty() {

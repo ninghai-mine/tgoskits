@@ -1,5 +1,6 @@
 pub mod export;
 pub mod hvc;
+pub mod locate;
 pub mod log;
 pub mod memory;
 pub mod modules;

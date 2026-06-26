@@ -14,6 +14,6 @@
 +	}
 +#endif
 +
- 	/* Do not scroll important messages */
+ 	/* Do not scroll important messages printed above */
  	suppress_printk = 1;
  	local_irq_enable();

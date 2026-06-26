@@ -23,7 +23,7 @@ set -euo pipefail
 
 VMLINUX="${1:?Usage: $0 <path-to-vmlinux>}"
 KIMAGE_VADDR="0xffff800080000000"
-KERNEL_LOAD_PA="0x223400000"
+KERNEL_LOAD_PA="0x223600000"
 
 if [ ! -f "$VMLINUX" ]; then
     echo "Error: vmlinux not found at '$VMLINUX'"

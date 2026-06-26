@@ -15,10 +15,5 @@ __section(".gnu.linkonce.this_module") = {
 };
 
 
-
-static const struct modversion_info ____versions[]
-__used __section("__versions") = {
-};
-
 MODULE_INFO(depends, "");
 

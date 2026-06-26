@@ -44,6 +44,12 @@ pub struct AnalysisResult {
     pub key_registers: Vec<(String, u64)>,
     /// Data-structure sanity checks (stack, current_task, preempt, etc.).
     pub dstruct_result: DstructResult,
+    /// ESR_EL1 at crash (for hardware exception diagnosis).
+    pub esr_el1: u64,
+    /// FAR_EL1 at crash.
+    pub far_el1: u64,
+    /// Human-readable crash detail: combines ESR decode + dmesg panic reason.
+    pub crash_detail: String,
 }
 
 /// Run the full analysis pipeline on a loaded vmcore.
@@ -156,7 +162,13 @@ pub fn analyze(
     let backtrace = if !backtrace_valid {
         let log_text = get_log_text(vmcore);
         if let Some(ref text) = log_text {
-            let dmesg_bt = extract_backtrace_from_dmesg(text, sym);
+            let mut dmesg_bt = extract_backtrace_from_dmesg(text, sym);
+            // Inject crash PC from FP-unwind frame 0 so `bt` shows hex addresses.
+            if let Some(fp0) = backtrace.first() {
+                if fp0.pc != 0 && !dmesg_bt.is_empty() {
+                    dmesg_bt[0].pc = fp0.pc;
+                }
+            }
             if dmesg_bt.len() > 1 {
                 ax_std::println!("[recovery] backtrace extracted from dmesg ({} frames)", dmesg_bt.len());
                 dmesg_bt
@@ -172,6 +184,9 @@ pub fn analyze(
     } else {
         backtrace
     };
+
+    // Step 5b — Deduplicate consecutive identical frames (common in stack overflow).
+    let backtrace = dedup_backtrace(backtrace);
 
     // Step 5c — Data-structure sanity checks.
     let dstruct_result = primary_vcpu
@@ -210,6 +225,27 @@ pub fn analyze(
         process
     };
 
+    // Build crash detail: ESR decode + dmesg panic reason
+    let log_text = get_log_text(vmcore);
+    let panic_reason = log_text
+        .as_deref()
+        .and_then(|text| extract_panic_reason(text))
+        .unwrap_or_else(|| "unknown reason".into());
+    // Clean trailing garbage from prb ringbuffer artifacts
+    let panic_reason = clean_panic_reason(&panic_reason);
+    let esr_diag = if esr != 0 {
+        decode_esr(esr, far, crash_function.as_deref()).0
+    } else {
+        // ESR=0 means hardware exception was handled by kernel at EL1.
+        // Check dmesg for hardware fault clues.
+        if panic_reason_has_hw_fault(&panic_reason) {
+            "Hardware exception handled by kernel (ESR consumed by EL1 handler)".into()
+        } else {
+            "(deliberate panic via HVC — no hardware exception)".into()
+        }
+    };
+    let crash_detail = alloc::format!("{}; Panic reason: {}", esr_diag, panic_reason);
+
     AnalysisResult {
         analysis_version: "1.0".into(),
         crash_event: vmcore.crash_event.clone(),
@@ -223,6 +259,9 @@ pub fn analyze(
         possible_causes,
         key_registers,
         dstruct_result,
+        esr_el1: esr,
+        far_el1: far,
+        crash_detail,
     }
 }
 
@@ -282,6 +321,113 @@ fn extract_esr_far_from_dmesg(dmesg: &str) -> (u64, u64) {
     (esr, far)
 }
 
+/// Extract the panic reason from dmesg (the text after "Kernel panic - not syncing:").
+///
+/// Examples:
+/// - `echo c > /proc/sysrq-trigger` → "SysRq"
+/// - NULL pointer dereference → "Attempted to kill init! ..."
+/// - BUG() → "BUG: ..."
+/// - Unhandled fault → "Unhandled fault: ..."
+fn extract_panic_reason(dmesg: &str) -> Option<String> {
+    // Priority 1: "Kernel panic - not syncing: <reason>"
+    for line in dmesg.lines() {
+        let stripped = strip_timestamp(line);
+        if let Some(reason) = stripped.strip_prefix("Kernel panic - not syncing:") {
+            let reason = reason.trim().trim_end_matches('.');
+            if !reason.is_empty() {
+                return Some(reason.to_string());
+            }
+        }
+    }
+    // Priority 2: "BUG:" lines (BUG() macro)
+    for line in dmesg.lines() {
+        let stripped = strip_timestamp(line);
+        if let Some(reason) = stripped.strip_prefix("BUG:") {
+            let reason = reason.trim().trim_end_matches('.');
+            if !reason.is_empty() {
+                return Some(format!("BUG: {}", reason));
+            }
+        }
+    }
+    // Priority 3: "Unable to handle kernel" (NULL pointer, data abort, etc.)
+    for line in dmesg.lines() {
+        let stripped = strip_timestamp(line);
+        if stripped.starts_with("Unable to handle kernel") {
+            let reason = stripped.trim().trim_end_matches('.');
+            return Some(reason.to_string());
+        }
+    }
+    // Priority 4: "Unhandled fault" 
+    for line in dmesg.lines() {
+        let stripped = strip_timestamp(line);
+        if stripped.starts_with("Unhandled fault") {
+            let reason = stripped.trim().trim_end_matches('.');
+            return Some(reason.to_string());
+        }
+    }
+    None
+}
+
+/// Check if a panic reason string suggests a hardware fault was involved.
+fn panic_reason_has_hw_fault(reason: &str) -> bool {
+    let r = reason.to_lowercase();
+    r.contains("null pointer")
+        || r.contains("undefined instruction")
+        || r.contains("page fault")
+        || r.contains("translation fault")
+        || r.contains("data abort")
+        || r.contains("instruction abort")
+        || r.contains("alignment fault")
+        || r.contains("segmentation fault")
+        || r.contains("unhandled fault")
+        || r.contains("unable to handle kernel")
+        || r.contains("bug:")          // "Oops - BUG: ..." pattern
+        || r.contains("oops")          // any Oops implies a fault
+        || r.contains("double free")   // slab/slub debug
+        || r.contains("use-after-free")
+        || r.contains("slab")          // slab corruption
+        || r.contains("stack overflow")
+        || r.contains("stack exhaustion")
+        || r.contains("recursion")
+}
+
+/// Clean trailing garbage characters from a panic reason string.
+/// prb ringbuffer extraction can leave adjacent-record artifacts.
+fn clean_panic_reason(reason: &str) -> String {
+    // Truncate at the first newline or null byte
+    let reason = reason.split('\n').next().unwrap_or(reason);
+    let reason = reason.split('\0').next().unwrap_or(reason);
+    let reason = reason.trim();
+    // If the reason looks like "Oops - BUG: Fatal exceptionon" or
+    // "Oops - Undefined instruction: Fatal exceptionon" where the
+    // trailing characters are prb ringbuffer record pollution,
+    // strip them by matching against known kernel log word endings.
+    let known_endings = [
+        "exception", "fault", "error", "abort", "handler",
+        "panic", "oops", "sysrq", "triggered", "crash",
+        "insmod", "init", "process", "overflow",
+        // NOTE: "kernel" intentionally NOT in this list —
+        // it would match "kernel stack overflow" and truncate incorrectly.
+    ];
+    for ending in &known_endings {
+        // Find the last occurrence of this word in the reason
+        if let Some(pos) = reason.to_lowercase().rfind(ending) {
+            let end = pos + ending.len();
+            // If there are extra characters after this known word
+            // that are not spaces or punctuation, trim them
+            let after: String = reason[end..].chars()
+                .take_while(|c| c.is_whitespace() || *c == '.' || *c == '!' || *c == '?')
+                .collect();
+            if end + after.len() < reason.len() {
+                // There's trailing garbage — strip it
+                return reason[..end + after.len()].to_string();
+            }
+            break;
+        }
+    }
+    reason.to_string()
+}
+
 /// Helper: strip the kernel log timestamp prefix `[...]` from a line.
 /// Returns the line content after the timestamp, or the original line if no
 /// timestamp is found.
@@ -296,6 +442,46 @@ fn strip_timestamp(line: &str) -> &str {
         }
     }
     t
+}
+
+/// Collapse consecutive identical frames (same function, pc=0) into a
+/// single "<repeated N times>" entry.  This cleans up stack-overflow
+/// backtraces where the recursive function fills hundreds of frames.
+fn dedup_backtrace(mut bt: Vec<StackFrame>) -> Vec<StackFrame> {
+    if bt.len() < 3 { return bt; }
+    let mut result: Vec<StackFrame> = Vec::with_capacity(bt.len());
+    let mut i = 0;
+    while i < bt.len() {
+        let current = &bt[i];
+        // Only collapse frames with pc==0 (dmesg-extracted, no address)
+        if current.pc == 0 && current.func_name.is_some() {
+            let func = current.func_name.as_deref().unwrap_or("");
+            let mut count = 1;
+            let mut j = i + 1;
+            while j < bt.len() {
+                let next = &bt[j];
+                if next.pc == 0 && next.func_name.as_deref() == Some(func) {
+                    count += 1;
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if count >= 3 {
+                // Replace N identical frames with a single summary frame
+                let summary = alloc::format!("<{} repeated {} times>", func, count);
+                let mut frame = current.clone();
+                frame.func_name = Some(summary);
+                frame.func_offset = None;
+                result.push(frame);
+                i = j;
+                continue;
+            }
+        }
+        result.push(bt[i].clone());
+        i += 1;
+    }
+    result
 }
 
 /// Try to extract the kernel backtrace (Call trace) from dmesg text.

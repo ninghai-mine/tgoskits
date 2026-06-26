@@ -34,19 +34,31 @@ use crate::capture::register;
 /// Guest kernel linear mapping offset (GVA → GPA).
 const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
-/// Linux kernel image area base (runtime MAP_IDENTICAL GPA).
-/// From AxVisor log: gpa=GPA:0x223600000, size=256 MiB.
+/// Linux kernel image area base.
 const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;
-const KERNEL_IMAGE_TEXT_PA: u64 = 0x2_2360_0000;
+/// Fallback HPA of `_text` (used when dynamic locate fails).
+const KERNEL_IMAGE_TEXT_PA_FALLBACK: u64 = 0x2_2380_0000;
 
-/// Default kernel log buffer GPA.
-/// __log_buf VA=0xffff800081657fb8 → GPA=0x224c57fb8
-/// Formula: GPA = VA - 0xffff800080000000 + 0x223600000
-const DEFAULT_LOG_BUF_GPA: Option<u64> = Some(0x224_c57f_b8);
+/// Hardcoded fallback GPAs.  These are correct for a specific kernel
+/// build (MODVERSIONS=n, TEXT_OFFSET=0x200000, HPA_BASE=0x223600000).
+/// At runtime, `resolve_hpa()` and `resolve_log_buf_hpa()` try dynamic
+/// discovery first and fall back to these values.
+const DEFAULT_LOG_BUF_GPA_FALLBACK: u64 = 0x224_e47f_b8;
+const PRINTK_RB_STATIC_GPA_FALLBACK: u64 = 0x2_24c0_8110;
 
-/// GPA of `printk_rb_static` symbol.
-/// VA 0xffff800081418110 → GPA 0x224a18110
-const PRINTK_RB_STATIC_GPA: u64 = 0x2_24a1_8110;
+/// Resolve __log_buf HPA (tries dynamic locate, falls back to hardcoded).
+fn resolve_log_buf_hpa() -> u64 {
+    crate::capture::locate::offset_to_hpa(
+        crate::capture::locate::offsets::__LOG_BUF
+    )
+}
+
+/// Resolve printk_rb_static HPA (tries dynamic locate, falls back to hardcoded).
+fn resolve_prb_static_hpa() -> u64 {
+    crate::capture::locate::offset_to_hpa(
+        crate::capture::locate::offsets::PRINTK_RB_STATIC
+    )
+}
 
 /// Descriptor state: finalized (ready for reading).
 const DESC_FINALIZED: u64 = 0x2;
@@ -101,9 +113,10 @@ fn read_u16_le(buf: &[u8], offset: usize) -> u16 {
 }
 
 /// Convert a Guest Virtual Address to a Guest Physical Address.
+/// Tries dynamic HPA_BASE first, falls back to hardcoded constant.
 pub fn gva_to_gpa(gva: u64) -> u64 {
     if gva >= KERNEL_IMAGE_TEXT_VA && gva < KERNEL_IMAGE_TEXT_VA + 0x200_0000 {
-        gva - KERNEL_IMAGE_TEXT_VA + KERNEL_IMAGE_TEXT_PA
+        crate::capture::locate::offset_to_hpa(gva - KERNEL_IMAGE_TEXT_VA)
     } else if gva >= PHYS_VIRT_OFFSET {
         gva.wrapping_sub(PHYS_VIRT_OFFSET)
     } else {
@@ -124,64 +137,81 @@ fn read_guest_buf(vm_id: u64, gpa: u64, size: usize) -> Result<Vec<u8>, String> 
 }
 
 /// Collect kernel log.
-/// First tries simple raw buffer read (from DEFAULT_LOG_BUF_GPA),
-/// then falls back to prb ringbuffer parsing.
+/// If `log_buf_gpa` is `Some`, uses that address directly.
+/// If `None`, tries dynamic HPA discovery; falls back to hardcoded constant.
 pub fn collect_kernel_log(
     target_vm_id: u64,
     log_buf_gpa: Option<u64>,
     max_size: usize,
 ) -> Result<KernelLogResult, String> {
+    let gpa = log_buf_gpa.unwrap_or_else(|| resolve_log_buf_hpa());
     // Try simple approach first: read __log_buf directly
-    if let Some(gpa) = log_buf_gpa {
-        let read_size = max_size.min(MAX_READ_SIZE);
-        let mut buffer = vec![0u8; read_size];
-        match register::read_guest_mem(target_vm_id, gpa, &mut buffer) {
-            Ok(read_len) if read_len > 0 => {
-                buffer.truncate(read_len);
-                // Print raw hex of first 64 bytes for debugging
-                let mut hex_preview = alloc::format!("[log] __log_buf @ {:#x}: {} bytes, first bytes: ", gpa, read_len);
-                for &b in buffer.iter().take(64) {
-                    hex_preview.push_str(&alloc::format!("{:02x} ", b));
-                }
-                ax_std::println!("{}", hex_preview);
+    let read_size = max_size.min(MAX_READ_SIZE);
+    let mut buffer = vec![0u8; read_size];
+    match register::read_guest_mem(target_vm_id, gpa, &mut buffer) {
+        Ok(read_len) if read_len > 0 => {
+            buffer.truncate(read_len);
+            // Print raw hex of first 64 bytes for debugging
+            let mut hex_preview = alloc::format!("[log] __log_buf @ {:#x}: {} bytes, first bytes: ", gpa, read_len);
+            for &b in buffer.iter().take(64) {
+                hex_preview.push_str(&alloc::format!("{:02x} ", b));
+            }
+            ax_std::println!("{}", hex_preview);
 
-                let mut raw_text = String::new();
-                let mut printable_count = 0usize;
-                for &c in &buffer {
-                    if c >= 0x20 && c <= 0x7e || c == b'\n' || c == b'\r' || c == b'\t' {
-                        raw_text.push(c as char);
-                        printable_count += 1;
-                    }
-                }
-                ax_std::println!("[log] simple read: {} printable chars out of {} bytes", printable_count, read_len);
-                if !raw_text.is_empty() {
-                    ax_std::println!("[log] collected {} chars (simple read)", raw_text.len());
-                    return Ok(KernelLogResult { raw_text, bytes_read: read_len });
+            let mut raw_text = String::new();
+            let mut printable_count = 0usize;
+            for &c in &buffer {
+                if c >= 0x20 && c <= 0x7e || c == b'\n' || c == b'\r' || c == b'\t' {
+                    raw_text.push(c as char);
+                    printable_count += 1;
                 }
             }
-            Ok(_) => {
-                ax_std::println!("[log] simple read: read_guest_mem returned 0 bytes");
+            ax_std::println!("[log] simple read: {} printable chars out of {} bytes", printable_count, read_len);
+            if !raw_text.is_empty() {
+                ax_std::println!("[log] collected {} chars (simple read)", raw_text.len());
+                return Ok(KernelLogResult { raw_text, bytes_read: read_len });
             }
-            Err(e) => {
-                ax_std::println!("[log] simple read failed: {}", e);
-            }
+        }
+        Ok(_) => {
+            ax_std::println!("[log] simple read: read_guest_mem returned 0 bytes");
+        }
+        Err(e) => {
+            ax_std::println!("[log] simple read failed: {}", e);
         }
     }
 
     // Fallback: prb ringbuffer parsing
+    let prb_gpa = resolve_prb_static_hpa();
     // 1. Read printk_ringbuffer struct (~88 bytes, but 80 is enough)
-    let rb_buf = match read_guest_buf(target_vm_id, PRINTK_RB_STATIC_GPA, 80) {
+    let rb_buf = match read_guest_buf(target_vm_id, prb_gpa, 80) {
         Ok(buf) => buf,
         Err(e) => {
-            return Err(alloc::format!("prb: read_guest_buf(PRINTK_RB_STATIC_GPA={:#x}) failed: {}", PRINTK_RB_STATIC_GPA, e));
+            return Err(alloc::format!("prb: read_guest_buf(PRINTK_RB_STATIC_GPA={:#x}) failed: {}", prb_gpa, e));
         }
     };
+
+    // Hex dump of raw printk_rb_static bytes for debugging
+    {
+        let mut hex = alloc::format!("[log] prb_raw @ {:#x}:", prb_gpa);
+        for (i, &b) in rb_buf.iter().take(80).enumerate() {
+            if i % 16 == 0 {
+                hex.push_str(&alloc::format!("\n  {:04x}:", i));
+            }
+            hex.push_str(&alloc::format!(" {:02x}", b));
+        }
+        ax_std::println!("{}", hex);
+    }
 
     let desc_count_bits = read_u32_le(&rb_buf, RB_DESC_RING_COUNT_BITS_OFF);
     let descs_va = read_u64_le(&rb_buf, RB_DESC_RING_DESCS_OFF);
     let infos_va = read_u64_le(&rb_buf, RB_DESC_RING_INFOS_OFF);
     let data_size_bits = read_u32_le(&rb_buf, RB_DATA_RING_SIZE_BITS_OFF);
     let data_va = read_u64_le(&rb_buf, RB_DATA_RING_DATA_OFF);
+
+    ax_std::println!(
+        "[log] prb parsed: count_bits={}, descs_va={:#x}, infos_va={:#x}, size_bits={}, data_va={:#x}",
+        desc_count_bits, descs_va, infos_va, data_size_bits, data_va,
+    );
 
     let num_descs = 1usize << desc_count_bits;
     let data_size = 1u64 << data_size_bits;

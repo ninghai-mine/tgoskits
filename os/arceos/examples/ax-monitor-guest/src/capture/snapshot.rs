@@ -99,6 +99,9 @@ pub fn capture_snapshot(event: CrashEvent) {
     let timestamp = boot_timestamp();
     ax_std::println!("[capture] start snapshot (event={:?})", event);
 
+    // Try to locate the kernel in guest memory for dynamic GPA resolution.
+    crate::capture::locate::locate_kernel(TARGET_VM_ID);
+
     // Ensure /vmcore/ directory exists for memory dump files.
     let _ = ax_std::fs::create_dir("/vmcore");
 
@@ -154,7 +157,7 @@ pub fn capture_snapshot(event: CrashEvent) {
         }
     };
     // Step 3: Collect kernel log buffer.
-    let kernel_log = match log::collect_kernel_log(TARGET_VM_ID, Some(0x224_c57f_b8), 64 * 1024) {
+    let kernel_log = match log::collect_kernel_log(TARGET_VM_ID, None, 64 * 1024) {
         Ok(result) => {
             ax_std::println!("[capture] kernel log collected: {} chars", result.raw_text.len());
             Some(result.raw_text)
