@@ -165,32 +165,49 @@ pub fn capture_snapshot(event: CrashEvent) {
         }
     };
 
-    // Step 4: Collect loaded kernel modules.
-    // Strategy A: scan the dumped memory for ELF headers and extract module
-    // names from .modinfo sections.
+    // Step 4: Load kallsyms + find page table for vmalloc translation.
+    // We do this early so modules collection and analysis can use it.
+    let (sym, _pgd_gpa) = 'load_sym: {
+        if let Some(ref addrs) = KALLSYMS_ADDRS {
+            match kallsyms::read_kallsyms(TARGET_VM_ID, addrs, &register::read_guest_mem) {
+                Ok(table) => {
+                    ax_std::println!("[recovery] kallsyms loaded: {} symbols", table.len());
+                    let read_64 = |pa: u64| -> Option<u64> {
+                        let mut buf = [0u8; 8];
+                        register::read_guest_mem(TARGET_VM_ID, pa, &mut buf).ok()?;
+                        Some(u64::from_le_bytes(buf))
+                    };
+                    let pgd = crate::recovery::page_table::find_pgd_pa(&table, &read_64);
+                    if let Ok(pa) = pgd {
+                        ax_std::println!("[recovery] page table PGD @ GPA {:#x}", pa);
+                    } else if let Err(ref e) = pgd {
+                        ax_std::println!("[recovery] page table unavailable: {}", e);
+                    }
+                    break 'load_sym (Some(table), pgd.ok());
+                }
+                Err(e) => ax_std::println!("[recovery] kallsyms unavailable: {}", e),
+            }
+        }
+        (None, None)
+    };
+
+    // Step 5: Collect loaded kernel modules (three strategies).
+    let mut modules: Vec<modules::ModuleInfo> = Vec::new();
+
+    // 5a: ELF header scan on dumped memory.
     let dump_refs: Vec<(u64, &[u8])> = memory_regions_data
         .iter()
         .map(|(base, data)| (*base, data.as_slice()))
         .collect();
-    let mut modules = match modules::collect_modules(TARGET_VM_ID, None, &|_| None, &dump_refs) {
-        Ok(result) => {
-            ax_std::println!(
-                "[capture] modules: {} found (method: {})",
-                result.modules.len(),
-                result.method,
-            );
-            for m in &result.modules {
-                ax_std::println!("  module: {} @ {:#x} ({} bytes)", m.name, m.base_addr, m.size);
+    if let Ok(ref result) = modules::collect_modules(TARGET_VM_ID, None, &|_| None, &dump_refs) {
+        for m in &result.modules {
+            if !modules.iter().any(|x| x.name == m.name) {
+                modules.push(m.clone());
             }
-            result.modules
         }
-        Err(e) => {
-            ax_std::println!("[capture] modules skipped: {}", e);
-            Vec::new()
-        }
-    };
+    }
 
-    // Strategy B: extract module names from the kernel log (dmesg).
+    // 5b: dmesg Call-trace extraction.
     // The kernel prints function+offset [module_name] in the Call trace.
     if let Some(ref log) = kernel_log {
         for line in log.lines() {
@@ -215,6 +232,93 @@ pub fn capture_snapshot(event: CrashEvent) {
         }
     }
 
+    // 5c: kernel module list walk (needs GVA→GPA translation for vmalloc).
+    if let Some(ref sym_table) = sym {
+        // Helper: check if GPA is within a known valid guest-memory range.
+        let is_valid_gpa = |gpa: u64| -> bool {
+            // Primary mapping:  [0x80000000 .. 0x90000000)  (256 MB)
+            // Identity mapping: [0x223600000 .. 0x233600000) (256 MB)
+            (gpa >= 0x8000_0000 && gpa < 0x9000_0000)
+            || (gpa >= MEMORY_REGIONS[0].0 && gpa < MEMORY_REGIONS[0].0 + 0x1000_0000)
+        };
+
+        // Helper: read 8 bytes from a raw GPA (no translation).
+        let read_raw_gpa = |gpa: u64| -> Option<u64> {
+            if !is_valid_gpa(gpa) {
+                ax_std::println!("[capture] read_gva: rejecting invalid GPA {:#x}", gpa);
+                return None;
+            }
+            let mut buf = [0u8; 8];
+            register::read_guest_mem(TARGET_VM_ID, gpa, &mut buf).ok()?;
+            Some(u64::from_le_bytes(buf))
+        };
+
+        let read_gva = |gva: u64| -> Option<u64> {
+            ax_std::println!("[capture] read_gva(0x{:016x})", gva);
+
+            // 1. Kernel image (first 32 MiB)
+            if gva >= KERNEL_IMAGE_TEXT_VA
+                && gva < KERNEL_IMAGE_TEXT_VA + 0x0200_0000
+            {
+                let gpa = gva.wrapping_sub(KERNEL_IMAGE_TEXT_VA)
+                    .wrapping_add(MEMORY_REGIONS[0].0);
+                ax_std::println!("[capture]   → kernel image GPA={:#x}", gpa);
+                return read_raw_gpa(gpa);
+            }
+            // 2. Linear mapping: GVA - PAGE_OFFSET = GPA (identity-mapped view)
+            if gva >= PHYS_VIRT_OFFSET && gva < 0xffff_8000_0000_0000u64 {
+                let gpa = gva.wrapping_sub(PHYS_VIRT_OFFSET);
+                ax_std::println!("[capture]   → linear map GPA={:#x}", gpa);
+                return read_raw_gpa(gpa);
+            }
+            // 3. vmalloc → page table walk (requires PGD)
+            if gva >= 0xffff_8000_0000_0000u64 {
+                if let Some(pgd) = _pgd_gpa {
+                    ax_std::println!("[capture]   → page table walk PGD={:#x}", pgd);
+                    let gpa = crate::recovery::page_table::gva_to_gpa(
+                        gva, pgd,
+                        &|pa: u64| {
+                            ax_std::println!("[capture]     pt_read(GPA={:#x})", pa);
+                            let r = read_raw_gpa(pa);
+                            ax_std::println!("[capture]     pt_read → {:?}", r);
+                            r
+                        },
+                    );
+                    match gpa {
+                        Some(pa) => {
+                            ax_std::println!("[capture]   → walk result GPA={:#x}", pa);
+                            let data = read_raw_gpa(pa);
+                            ax_std::println!("[capture]   → data={:?}", data);
+                            return data;
+                        }
+                        None => {
+                            ax_std::println!("[capture]   → walk FAILED (invalid vmalloc addr)");
+                            return None;
+                        }
+                    }
+                }
+                ax_std::println!("[capture]   → no PGD, can't translate vmalloc");
+                return None;
+            }
+            // 4. Fallback: raw GPA pass-through
+            ax_std::println!("[capture]   → raw GPA={:#x}", gva);
+            read_raw_gpa(gva)
+        };
+        let list_result = modules::collect_modules_via_list(sym_table, &read_gva);
+        for m in list_result.modules {
+            if !modules.iter().any(|x| x.name == m.name) {
+                ax_std::println!("[capture] module '{}' via list walk @ {:#x} ({} bytes)",
+                    m.name, m.base_addr, m.size);
+                modules.push(m);
+            }
+        }
+    }
+
+    ax_std::println!("[capture] modules: {} total", modules.len());
+    for m in &modules {
+        ax_std::println!("  module: {} @ {:#x} ({} bytes)", m.name, m.base_addr, m.size);
+    }
+
     let snapshot = CrashSnapshot {
         event,
         vcpu_regs,
@@ -233,50 +337,8 @@ pub fn capture_snapshot(event: CrashEvent) {
         if let Some(vmcore) = storage::load_vmcore(&vmcore_path) {
             ax_std::println!("[recovery] starting crash analysis...");
 
-            // Build a memory reader closure that translates Guest Virtual Address
-            // → Guest Physical Address and looks up data in the dumped segments.
-            // Falls back to HVC #9 (CrashReadGuestMem) for addresses not in the dump.
-            let mem_reader = |addr: u64| -> Option<u64> {
-                // GVA → GPA: handle kernel image, linear mapping, and others
-                let gpa = if addr >= KERNEL_IMAGE_TEXT_VA
-                    && addr < KERNEL_IMAGE_TEXT_VA + 0x8000_0000
-                {
-                    // Kernel image region (2 GiB): VA - _text_va → base_gpa + offset
-                    addr.wrapping_sub(KERNEL_IMAGE_TEXT_VA)
-                        .wrapping_add(MEMORY_REGIONS[0].0)
-                } else if addr >= PHYS_VIRT_OFFSET
-                    && addr < 0xffff_8000_0000_0000u64
-                {
-                    // Linear mapping: VA = PAGE_OFFSET + guest_PA
-                    // guest_PA = VA - PAGE_OFFSET
-                    // HPA = MEMORY_REGIONS[0].0 + (guest_PA - GUEST_PHYS_BASE)
-                    let guest_pa = addr.wrapping_sub(PHYS_VIRT_OFFSET);
-                    guest_pa.wrapping_sub(GUEST_PHYS_BASE)
-                        .wrapping_add(MEMORY_REGIONS[0].0)
-                } else {
-                    // Raw GPA (for debugging with the `memory` command)
-                    addr
-                };
-                // Try dump segments first
-                if let Some((base, data)) = memory_regions_data
-                    .iter()
-                    .find(|(base, data)| gpa >= *base && gpa < *base + data.len() as u64)
-                {
-                    let offset = (gpa - *base) as usize;
-                    if offset + 8 <= data.len() {
-                        let mut bytes = [0u8; 8];
-                        bytes.copy_from_slice(&data[offset..offset + 8]);
-                        return Some(u64::from_le_bytes(bytes));
-                    }
-                }
-                // Fallback: read from frozen target VM via HVC #9
-                let mut buf = [0u8; 8];
-                register::read_guest_mem(TARGET_VM_ID, gpa, &mut buf).ok()?;
-                Some(u64::from_le_bytes(buf))
-            };
-
             // Load kallsyms symbol table from frozen target VM for function
-            // name resolution in backtrace / analysis.
+            // name resolution and page-table walking.
             let sym = 'load: {
                 if let Some(ref addrs) = KALLSYMS_ADDRS {
                     match kallsyms::read_kallsyms(
@@ -314,6 +376,91 @@ pub fn capture_snapshot(event: CrashEvent) {
                 }
 
                 None
+            };
+
+            // Try to find the kernel's master page table for vmalloc address
+            // translation (needed for kernel stack unwinding, module list, etc.).
+            let pgd_gpa = sym.as_ref().and_then(|s| {
+                use crate::recovery::page_table;
+                let read_64 = |pa: u64| -> Option<u64> {
+                    let mut buf = [0u8; 8];
+                    register::read_guest_mem(TARGET_VM_ID, pa, &mut buf).ok()?;
+                    Some(u64::from_le_bytes(buf))
+                };
+                match page_table::find_pgd_pa(s, &read_64) {
+                    Ok(pa) => {
+                        ax_std::println!("[recovery] page table PGD @ GPA {:#x}", pa);
+                        Some(pa)
+                    }
+                    Err(e) => {
+                        ax_std::println!("[recovery] page table unavailable: {}", e);
+                        None
+                    }
+                }
+            });
+
+            // Build a memory reader closure that translates GVA → GPA via:
+            //   1. Kernel image formula (first 32 MiB — actual kernel image)
+            //   2. Linear mapping formula
+            //   3. Page table walk (vmalloc / module addresses)
+            //   4. HVC #9 fallback
+            // (GPA range check applied before any HVC #9 call.)
+            const KERNEL_IMAGE_SIZE: u64 = 0x0200_0000; // 32 MiB
+
+            // Helper: validate GPA and read 8 bytes from target VM memory.
+            let read_mem_gpa = |gpa: u64| -> Option<u64> {
+                // Must be in primary or identity-mapped RAM range.
+                if !(gpa >= 0x8000_0000 && gpa < 0x9000_0000)
+                    && !(gpa >= MEMORY_REGIONS[0].0 && gpa < MEMORY_REGIONS[0].0 + 0x1000_0000)
+                {
+                    ax_std::println!("[recovery] read_mem_gpa: rejecting invalid GPA {:#x}", gpa);
+                    return None;
+                }
+                // Try dump segments first (faster, avoids HVC #9).
+                if let Some((base, data)) = memory_regions_data
+                    .iter()
+                    .find(|(base, data)| gpa >= *base && gpa < *base + data.len() as u64)
+                {
+                    let offset = (gpa - *base) as usize;
+                    if offset + 8 <= data.len() {
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(&data[offset..offset + 8]);
+                        return Some(u64::from_le_bytes(bytes));
+                    }
+                }
+                // HVC #9 fallback
+                let mut buf = [0u8; 8];
+                register::read_guest_mem(TARGET_VM_ID, gpa, &mut buf).ok()?;
+                Some(u64::from_le_bytes(buf))
+            };
+
+            let mem_reader = |addr: u64| -> Option<u64> {
+                let gpa = if addr >= KERNEL_IMAGE_TEXT_VA
+                    && addr < KERNEL_IMAGE_TEXT_VA + KERNEL_IMAGE_SIZE
+                {
+                    // Kernel image region (first 32 MiB)
+                    addr.wrapping_sub(KERNEL_IMAGE_TEXT_VA)
+                        .wrapping_add(MEMORY_REGIONS[0].0)
+                } else if addr >= PHYS_VIRT_OFFSET
+                    && addr < 0xffff_8000_0000_0000u64
+                {
+                    // Linear mapping: GVA - PAGE_OFFSET = GPA (identity-mapped view).
+                    addr.wrapping_sub(PHYS_VIRT_OFFSET)
+                } else if addr >= 0xffff_8000_0000_0000u64 && pgd_gpa.is_some()
+                {
+                    // vmalloc / module region → page table walk
+                    let read_64 = |pa: u64| -> Option<u64> {
+                        let mut buf = [0u8; 8];
+                        register::read_guest_mem(TARGET_VM_ID, pa, &mut buf).ok()?;
+                        Some(u64::from_le_bytes(buf))
+                    };
+                    crate::recovery::page_table::gva_to_gpa(addr, pgd_gpa.unwrap(), &read_64)?
+                } else {
+                    // Raw GPA
+                    addr
+                };
+                // Read 8 bytes from the translated GPA (with validity check).
+                read_mem_gpa(gpa)
             };
 
             let result = analyzer::analyze(

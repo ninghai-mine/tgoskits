@@ -223,13 +223,26 @@ impl<H: PagingHandler> AddrSpace<H> {
 
             let mut v = Vec::new();
             while start < end {
-                let (start_paddr, _, page_size) = self.page_table().query(start).unwrap();
+                let (start_paddr, _, page_size) = match self.page_table().query(start) {
+                    Ok(x) => x,
+                    Err(_) => {
+                        warn!("translated_byte_buffer: GPA={:#x} has no valid Stage-2 mapping", start);
+                        if v.is_empty() { return None; }
+                        break;
+                    }
+                };
                 let mut end_va = start.align_down(page_size) + page_size.into();
                 end_va = end_va.min(end);
 
+                let hva = H::phys_to_virt(start_paddr);
+                if hva.as_usize() == 0 {
+                    warn!("translated_byte_buffer: HPA={:#x} → zero HVA, skipping", start_paddr);
+                    if v.is_empty() { return None; }
+                    break;
+                }
                 v.push(unsafe {
                     core::slice::from_raw_parts_mut(
-                        H::phys_to_virt(start_paddr).as_mut_ptr(),
+                        hva.as_mut_ptr(),
                         (end_va - start.as_usize()).into(),
                     )
                 });
@@ -253,9 +266,16 @@ impl<H: PagingHandler> AddrSpace<H> {
                         debug!("  fallback: GPA={:#x} → HPA={:#x} page_size={:?}",
                             start, start_paddr, page_size);
 
+                        let hva = H::phys_to_virt(start_paddr);
+                        // Sanity: reject if HVA is zero or looks unmapped
+                        if hva.as_usize() == 0 {
+                            warn!("  fallback: HPA={:#x} → zero HVA, skipping", start_paddr);
+                            if v.is_empty() { return None; }
+                            break;
+                        }
                         v.push(unsafe {
                             core::slice::from_raw_parts_mut(
-                                H::phys_to_virt(start_paddr).as_mut_ptr(),
+                                hva.as_mut_ptr(),
                                 (end_va - start.as_usize()).into(),
                             )
                         });
