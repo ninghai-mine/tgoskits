@@ -367,7 +367,7 @@ impl HyperCall {
                 let buf_gpa = GuestPhysAddr::from_usize(self.args[2] as usize);
                 let size = self.args[3] as usize;
 
-                info!(
+                trace!(
                     "VM[{}] HyperCall {:?} target VM[{}] GPA={:#x} size={}",
                     self.vm.id(), self.code, target_vm_id,
                     target_gpa.as_usize(), size,
@@ -388,7 +388,7 @@ impl HyperCall {
                 // Write the data from the temporary buffer into the calling VM's buffer.
                 let written = self.vm.write_guest_bytes(buf_gpa, &buf[..actual])?;
 
-                info!(
+                trace!(
                     "VM[{}] read {} bytes from VM[{}] GPA={:#x}, wrote {} bytes to buffer",
                     self.vm.id(), actual, target_vm_id, target_gpa.as_usize(), written,
                 );
