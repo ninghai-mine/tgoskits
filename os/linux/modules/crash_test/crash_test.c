@@ -4,10 +4,12 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
+#include <linux/preempt.h>
+#include <asm/processor.h>
 
 static char *action = "null";
 module_param(action, charp, 0);
-MODULE_PARM_DESC(action, "null | write_null | bug | undefined | double_free | corrupt_mem | stack_overflow | exec_null");
+MODULE_PARM_DESC(action, "null | write_null | bug | undefined | double_free | corrupt_mem | stack_overflow | exec_null | hang | double_fault");
 
 static int __init crash_init(void)
 {
@@ -50,6 +52,36 @@ static int __init crash_init(void)
         pr_info("crash_test: jumping to NULL (instruction fetch)\n");
         void (*fn)(void) = NULL;
         fn();                              // Instruction Abort from NULL
+
+    } else if (!strcmp(action, "hang")) {
+        // Kernel hang / deadlock — watchdog should detect after 60s.
+        // Spin with preempt disabled so the CPU can't schedule away.
+        pr_info("crash_test: entering infinite loop (hang test)\n");
+        preempt_disable();
+        while (1) {
+            cpu_relax();                   // infinite busy-loop, watchdog timeout
+        }
+        preempt_enable();
+
+    } else if (!strcmp(action, "double_fault")) {
+        // Double fault: cause an exception on a corrupted stack pointer.
+        // The kernel's exception entry code saves registers to SP at entry.
+        // If SP is unmapped, the save itself triggers a second Data Abort
+        // during exception processing → double fault (nested abort).
+        //
+        // On ARM64 Linux with VMAP_STACK, the guard page mechanism normally
+        // handles this gracefully.  By corrupting SP to an arbitrary unmapped
+        // address, we bypass the guard-page logic and force a true double fault.
+        pr_info("crash_test: triggering double fault (bad SP + abort)\n");
+        register unsigned long bad_sp asm("x20") = 0xdead0000;
+        asm volatile(
+            "mov x21, sp\n\t"       // save original SP in x21
+            "mov sp, %[bad]\n\t"    // SP ← unmapped address
+            "mov x0, #0\n\t"        // x0 = 0
+            "str x0, [x0]\n\t"      // Data Abort (write to address 0x0)
+            "mov sp, x21"           // (unreachable) restore SP
+            : : [bad] "r"(bad_sp) : "x0", "x21", "memory"
+        );
 
     } else {
         pr_err("crash_test: unknown action '%s'\n", action);
