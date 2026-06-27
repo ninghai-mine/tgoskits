@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub enum CrashEvent {
     Panic,
     WatchdogTimeout,
+    DoubleFault,
     Exception,
     Unknown,
 }

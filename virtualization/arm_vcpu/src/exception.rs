@@ -186,37 +186,6 @@ fn handle_data_abort(context_frame: &mut TrapFrame) -> AxResult<AxVCpuExitReason
         }
     }
 
-    // ── Kernel crash detection ──────────────────────────────────────
-    //
-    // Without this check, a guest kernel Data Abort (e.g. NULL pointer
-    // dereference) is silently forwarded as MMIO — the hypervisor has
-    // no way to distinguish "legitimate device MMIO" from "kernel bug".
-    //
-    // We detect crashes by looking at:
-    //   1. FAR (fault address) == 0  → classic NULL dereference
-    //   2. PC is in kernel space      → not a userspace fault
-    //
-    // When a crash is detected we return an error that propagates up
-    // to the vCPU run-loop, which shuts down the VM (VMStatus::Stopped).
-    // The Monitor Guest's PollCrashStatus (#10) then sees the crash.
-    //
-    // This works WITHOUT the Linux kernel HVC #13 patch — the hypervisor
-    // independently identifies the crash from the hardware exception.
-    let pc = context_frame.exception_pc() as u64;
-    let fault_gpa = addr.as_usize() as u64;
-    let is_kernel_crash = fault_gpa == 0
-        || (fault_gpa >= 0xffff_0000_0000_0000 && fault_gpa <= 0xffff_ffff_ffff_f000);
-
-    if is_kernel_crash {
-        error!(
-            "[CrashDetect] Guest kernel Data Abort: FAR={:#x} PC={:#x} ESR={:#x} — shutting down VM",
-            fault_gpa, pc, exception_esr(),
-        );
-        context_frame.capture_crash_regs();
-        return Err(AxError::Unsupported);
-    }
-    // ── End crash detection ─────────────────────────────────────────
-
     if is_write {
         return Ok(AxVCpuExitReason::MmioWrite {
             addr,
