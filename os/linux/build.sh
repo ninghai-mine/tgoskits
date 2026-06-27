@@ -25,7 +25,8 @@ echo "[1/4] Apply kernel config..."
 cp "$CONFIG_FILE" .config
 
 echo "[2/4] Apply HVC panic patch..."
-patch -p1 < "$PATCH_FILE"
+# --forward skips if already applied (idempotent)
+patch -p1 --forward < "$PATCH_FILE"
 
 echo "[3/4] Build kernel Image..."
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) Image
