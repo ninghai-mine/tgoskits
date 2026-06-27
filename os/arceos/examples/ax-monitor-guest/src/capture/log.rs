@@ -23,7 +23,6 @@
 //!   Data ring entry: [u64 id][u8 text[text_len]]
 
 extern crate alloc;
-use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
@@ -36,15 +35,6 @@ const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
 /// Linux kernel image area base.
 const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;
-/// Fallback HPA of `_text` (used when dynamic locate fails).
-const KERNEL_IMAGE_TEXT_PA_FALLBACK: u64 = 0x2_2380_0000;
-
-/// Hardcoded fallback GPAs.  These are correct for a specific kernel
-/// build (MODVERSIONS=n, TEXT_OFFSET=0x200000, HPA_BASE=0x223600000).
-/// At runtime, `resolve_hpa()` and `resolve_log_buf_hpa()` try dynamic
-/// discovery first and fall back to these values.
-const DEFAULT_LOG_BUF_GPA_FALLBACK: u64 = 0x224_e47f_b8;
-const PRINTK_RB_STATIC_GPA_FALLBACK: u64 = 0x2_24c0_8110;
 
 /// Resolve __log_buf HPA (tries dynamic locate, falls back to hardcoded).
 fn resolve_log_buf_hpa() -> u64 {
@@ -88,7 +78,6 @@ const DESC_BATCH: usize = 256;
 
 pub struct KernelLogResult {
     pub raw_text: String,
-    pub bytes_read: usize,
 }
 
 /// Read a u64 from a byte slice at the given offset (little-endian).
@@ -169,7 +158,7 @@ pub fn collect_kernel_log(
             ax_std::println!("[log] simple read: {} printable chars out of {} bytes", printable_count, read_len);
             if !raw_text.is_empty() {
                 ax_std::println!("[log] collected {} chars (simple read)", raw_text.len());
-                return Ok(KernelLogResult { raw_text, bytes_read: read_len });
+                return Ok(KernelLogResult { raw_text });
             }
         }
         Ok(_) => {
@@ -318,7 +307,6 @@ pub fn collect_kernel_log(
 
     Ok(KernelLogResult {
         raw_text: text.clone(),
-        bytes_read: total_bytes_read,
     })
 }
 

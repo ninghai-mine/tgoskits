@@ -32,9 +32,6 @@ pub mod offsets {
 static HPA_BASE: AtomicU64 = AtomicU64::new(0);
 static LOCATED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Debug, Clone, Copy)]
-pub struct KernelLocation { pub hpa_base: u64 }
-
 pub fn get_hpa_base() -> Option<u64> {
     if LOCATED.load(Ordering::Acquire) { Some(HPA_BASE.load(Ordering::Relaxed)) } else { None }
 }
@@ -43,40 +40,35 @@ pub fn offset_to_hpa(offset: u64) -> u64 {
     let base = if LOCATED.load(Ordering::Acquire) {
         HPA_BASE.load(Ordering::Relaxed)
     } else {
-        // Before locate: use a fallback that gives correct value for any HPA_BASE.
-        // This only works if called AFTER locate_kernel() succeeds.
-        0x223800000  // last known, will be overridden after locate
+        0x223800000  // fallback
     };
     base + offset
 }
 
 /// Scan for kallsyms_num_syms to find HPA_BASE.
-/// Reads 4 bytes at candidate GPAs, checks if the value is in [MIN, MAX].
-pub fn locate_kernel(target_vm_id: u64) -> Option<KernelLocation> {
+/// Returns true if HPA_BASE was located.
+pub fn locate_kernel(target_vm_id: u64) -> bool {
     if LOCATED.load(Ordering::Acquire) {
-        return Some(KernelLocation { hpa_base: HPA_BASE.load(Ordering::Relaxed) });
+        return true;
     }
 
     let num_syms_offset = offsets::KALLSYMS_NUM_SYMS;
-    // Try last-known HPA_BASEs first (common values observed).
     let candidates = [
-        0x223800000u64,  // most recent
-        0x223a00000u64,  // current run
-        0x223600000u64,  // older
+        0x223800000u64,
+        0x223a00000u64,
+        0x223600000u64,
         0x224000000u64,
         0x223000000u64,
     ];
 
-    // 1. Fast path: try known candidates
     for &base in &candidates {
         let hpa = base + num_syms_offset;
         if probe_num_syms(target_vm_id, hpa) {
             store(base, hpa);
-            return Some(KernelLocation { hpa_base: base });
+            return true;
         }
     }
 
-    // 2. Scan around last known base
     let center = candidates[0];
     let start = center.saturating_sub(PROBE_HALF_RANGE);
     let end = center.saturating_add(PROBE_HALF_RANGE + 0x10000000);
@@ -88,12 +80,12 @@ pub fn locate_kernel(target_vm_id: u64) -> Option<KernelLocation> {
         let hpa = base + num_syms_offset;
         if probe_num_syms(target_vm_id, hpa) {
             store(base, hpa);
-            return Some(KernelLocation { hpa_base: base });
+            return true;
         }
     }
 
     ax_std::println!("[locate] FAILED — HPA_BASE not found");
-    None
+    false
 }
 
 fn probe_num_syms(target_vm_id: u64, hpa: u64) -> bool {

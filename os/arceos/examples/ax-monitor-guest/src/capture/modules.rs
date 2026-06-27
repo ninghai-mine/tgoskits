@@ -199,7 +199,7 @@ fn parse_elf_local(data: &[u8], elf_gpa: u64) -> Option<ModuleInfo> {
         let shdr = &data[shdr_off..shdr_off + 64];
 
         let sh_name   = u32::from_le_bytes(shdr[0..4].try_into().ok()?) as usize;
-        let sh_addr   = u64::from_le_bytes(shdr[16..24].try_into().ok()?);
+        let _sh_addr  = u64::from_le_bytes(shdr[16..24].try_into().ok()?);
         let sh_offset = u64::from_le_bytes(shdr[24..32].try_into().ok()?) as usize;
         let sh_size   = u64::from_le_bytes(shdr[32..40].try_into().ok()?) as usize;
 

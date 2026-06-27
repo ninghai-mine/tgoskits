@@ -3,7 +3,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
-use alloc::format;
 
 
 use crate::capture::export;
@@ -42,9 +41,6 @@ const PHYS_VIRT_OFFSET: u64 = 0xffff_0000_0000_0000;
 
 /// Guest physical memory base address (from target VM config).
 /// The target VM's RAM starts at GPA 0x8000_0000 with 256 MB.
-/// The hypervisor maps this to HPA MEMORY_REGIONS[0].0 (currently 0x223600000).
-/// Translation: HPA = guest_PA - GUEST_PHYS_BASE + MEMORY_REGIONS[0].0
-const GUEST_PHYS_BASE: u64 = 0x8000_0000;
 
 /// Kernel image virtual address base (KIMAGE_VADDR).
 const KERNEL_IMAGE_TEXT_VA: u64 = 0xffff_8000_8000_0000;

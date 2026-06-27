@@ -156,7 +156,13 @@ pub fn analyze(
     let backtrace = if !backtrace_valid {
         let log_text = get_log_text(vmcore);
         if let Some(ref text) = log_text {
-            let dmesg_bt = extract_backtrace_from_dmesg(text, sym);
+            let mut dmesg_bt = extract_backtrace_from_dmesg(text, sym);
+            // Inject crash PC from FP-unwind frame 0 so `bt` shows hex addresses.
+            if let Some(fp0) = backtrace.first() {
+                if fp0.pc != 0 && !dmesg_bt.is_empty() {
+                    dmesg_bt[0].pc = fp0.pc;
+                }
+            }
             if dmesg_bt.len() > 1 {
                 ax_std::println!("[recovery] backtrace extracted from dmesg ({} frames)", dmesg_bt.len());
                 dmesg_bt

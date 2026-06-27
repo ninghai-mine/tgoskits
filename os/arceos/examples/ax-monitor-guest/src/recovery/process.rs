@@ -12,7 +12,6 @@
 extern crate alloc;
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec;
 use alloc::vec::Vec;
 use crate::capture::storage::VcpuRegsEntry;
 use crate::recovery::symbol::{SymbolInfo, SymbolTable};

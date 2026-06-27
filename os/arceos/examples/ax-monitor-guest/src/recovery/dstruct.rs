@@ -80,9 +80,7 @@ const THREAD_SIZE: u64 = 0x4000;
 const THREAD_MASK: u64 = !(THREAD_SIZE - 1); // 0xffff_ffff_ffff_c000
 
 /// Offsets within `thread_info` (embedded at offset 0 of `task_struct`).
-const TI_FLAGS: u64        = 0;   // unsigned long flags
 const TI_PREEMPT_COUNT: u64 = 8;  // u64 preempt_count
-const TI_CPU: u64          = 16;  // u32 cpu
 
 /// SPSR_EL1 bit positions.
 const SPSR_IRQ_MASK: u64 = 1 << 7;
