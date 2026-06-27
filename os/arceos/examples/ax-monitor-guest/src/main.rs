@@ -31,6 +31,11 @@ fn main() {
     let mut prev_jiffies: Option<u64> = None;
     let mut hang_ticks: u64 = 0;
     let mut poll_ticks: u64 = 0;
+    // Must observe jiffies change at least once before enabling hang detection.
+    // Prevents false positives when the hardcoded jiffies GPA is stale.
+    let mut jiffies_live: bool = false;
+    // Track the first-seen jiffies value for the "changed?" check.
+    let mut first_jiffies: Option<u64> = None;
 
     loop {
         if register::poll_crash_status(TARGET_VM_ID) {
@@ -52,20 +57,33 @@ fn main() {
             poll_ticks = 0;
             match monitor::heartbeat::read_target_jiffies(TARGET_VM_ID) {
                 Some(j) => {
-                    if let Some(prev) = prev_jiffies {
-                        if j == prev {
-                            hang_ticks += JIFFIES_POLL_INTERVAL;
-                            if hang_ticks >= HANG_TIMEOUT_TICKS {
-                                println!("[monitor-guest] TARGET VM HANG DETECTED: jiffies unchanged for {} ticks", hang_ticks);
-                                set_vm_state(VmState::Hang);
-                                trigger_crash_event(CrashEvent::WatchdogTimeout);
-                                break;
+                    if !jiffies_live {
+                        // Still verifying the GPA — wait for jiffies to change.
+                        match first_jiffies {
+                            None => first_jiffies = Some(j),
+                            Some(first) if j != first => {
+                                jiffies_live = true;
+                                ax_std::println!("[monitor-guest] jiffies verified (changed), hang detection enabled");
                             }
-                        } else {
-                            hang_ticks = 0;  // reset — target is alive
+                            _ => {} // same value, keep waiting
                         }
                     }
-                    prev_jiffies = Some(j);
+                    if jiffies_live {
+                        if let Some(prev) = prev_jiffies {
+                            if j == prev {
+                                hang_ticks += JIFFIES_POLL_INTERVAL;
+                                if hang_ticks >= HANG_TIMEOUT_TICKS {
+                                    println!("[monitor-guest] TARGET VM HANG DETECTED: jiffies unchanged for {} ticks", hang_ticks);
+                                    set_vm_state(VmState::Hang);
+                                    trigger_crash_event(CrashEvent::WatchdogTimeout);
+                                    break;
+                                }
+                            } else {
+                                hang_ticks = 0;  // reset — target is alive
+                            }
+                        }
+                        prev_jiffies = Some(j);
+                    }
                 }
                 None => {
                     // read_guest_mem can fail if target VM is not fully booted
@@ -76,6 +94,8 @@ fn main() {
                     }
                     prev_jiffies = None;
                     hang_ticks = 0;
+                    first_jiffies = None;
+                    jiffies_live = false;
                 }
             }
         }
