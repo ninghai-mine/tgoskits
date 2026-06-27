@@ -186,6 +186,20 @@ fn handle_data_abort(context_frame: &mut TrapFrame) -> AxResult<AxVCpuExitReason
         }
     }
 
+    // Kernel crash detection: FAR==0 or kernel VA → crash, not MMIO.
+    let pc = context_frame.exception_pc() as u64;
+    let fault_gpa = addr.as_usize() as u64;
+    let is_kernel_crash = fault_gpa == 0
+        || (fault_gpa >= 0xffff_0000_0000_0000 && fault_gpa <= 0xffff_ffff_ffff_f000);
+    if is_kernel_crash {
+        error!(
+            "[CrashDetect] Guest kernel Data Abort: FAR={:#x} PC={:#x} ESR={:#x} — shutting down VM",
+            fault_gpa, pc, exception_esr(),
+        );
+        context_frame.capture_crash_regs();
+        return Err(AxError::Unsupported);
+    }
+
     if is_write {
         return Ok(AxVCpuExitReason::MmioWrite {
             addr,

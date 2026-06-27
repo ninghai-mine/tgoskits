@@ -57,11 +57,11 @@ static int __init crash_init(void)
         // Kernel hang / deadlock — watchdog should detect after 60s.
         // Spin with preempt disabled so the CPU can't schedule away.
         pr_info("crash_test: entering infinite loop (hang test)\n");
-        preempt_disable();
+        local_irq_disable();
         while (1) {
-            cpu_relax();                   // infinite busy-loop, watchdog timeout
+            cpu_relax();                   // infinite busy-loop, heartbeat stops
         }
-        preempt_enable();
+        local_irq_enable();
 
     } else if (!strcmp(action, "double_fault")) {
         // Double fault: cause an exception on a corrupted stack pointer.
