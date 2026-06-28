@@ -158,13 +158,23 @@ impl Aarch64ContextFrame {
     /// - `handle_exception_sync()` on Data/Instruction Abort (方案B)
     /// - `CrashFreezeGuest` hypercall handler as fallback (方案D)
     ///
-    /// Once locked (`crash_locked != 0`), subsequent calls are no-ops.
+    /// Once locked (`crash_locked != 0`), subsequent calls are no-ops unless
+    /// a nested exception (double fault) is detected: if SPSR_EL1.M == 4
+    /// (EL1t, exception context), the locked registers are overwritten with
+    /// the nested fault's ESR/FAR — this captures the *second* fault's state
+    /// rather than the first, enabling double-fault diagnosis.
     pub fn capture_crash_regs(&mut self) {
-        if self.crash_locked == 0 {
+        let is_nested = (self.spsr & 0xF) == 4; // EL1t = exception handler context
+        if self.crash_locked == 0 || is_nested {
             self.crash_esr_el2 = self.esr_el2;
             self.crash_far_el2 = self.far_el2;
             self.crash_locked = 1;
-            trace!("crash registers locked: esr={:#x}, far={:#x}", self.crash_esr_el2, self.crash_far_el2);
+            trace!(
+                "crash registers locked: esr={:#x}, far={:#x}{}",
+                self.crash_esr_el2,
+                self.crash_far_el2,
+                if is_nested { " (nested — double fault)" } else { "" }
+            );
         }
     }
 
