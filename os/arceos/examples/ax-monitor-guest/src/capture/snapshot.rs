@@ -324,21 +324,69 @@ pub fn capture_snapshot(event: CrashEvent) {
         ax_std::println!("  module: {} @ {:#x} ({} bytes)", m.name, m.base_addr, m.size);
     }
 
-    // Detect double fault from register state: if the ESR shows a Data or
-    // Instruction Abort AND the CPU was already in exception mode (EL1t),
-    // this is a nested exception — a second fault occurred while handling
-    // the first one.  No hypervisor changes needed.
-    let actual_event = vcpu_regs.first().map_or(event, |(_, r)| {
-        let ec = (r.esr_el1 >> 26) & 0x3F;
-        let el = r.spsr_el1 & 0xF;
-        let is_abort = matches!(ec, 0x20 | 0x21 | 0x24 | 0x25);
-        if is_abort && el == 4 {
-            ax_std::println!("[capture] double fault detected (EC={:#x}, EL={})", ec, el);
-            CrashEvent::DoubleFault
-        } else {
-            event
+    // Detect double fault from register state.
+    //
+    // ARM64 exception levels: SPSR_EL1.M bits indicate the mode BEFORE the
+    // exception was taken.
+    //   M=5 (EL1h) → exception taken from normal kernel code
+    //   M=4 (EL1t) → exception taken from exception handler → nested!
+    //
+    // Three signals are used (in priority order):
+    //   A) SPSR.M == 4  — direct evidence of nested exception (rare:
+    //      hypervisor must trap the *second* fault while Linux handled
+    //      the first one internally).
+    //   B) crash_type != 0 — hypervisor trapped a hardware exception
+    //      (Data/Instruction Abort etc.).  If the kernel later called
+    //      panic(), the panic was a *consequence* of the hardware fault.
+    //      Reclassify as Exception.
+    //   C) dmesg contains ESR/FAR — when the hypervisor does NOT trap
+    //      EL1 exceptions (passthrough mode), crash_type is always 0.
+    //      Fall back to parsing dmesg for ESR values that indicate a
+    //      hardware abort.
+    let actual_event = 'reclassify: {
+        // Try register-based check first (signals A + B).
+        if let Some((_, r)) = vcpu_regs.first() {
+            let ec = (r.esr_el1 >> 26) & 0x3F;
+            let el = r.spsr_el1 & 0xF;
+            let is_abort = matches!(ec, 0x20 | 0x21 | 0x24 | 0x25);
+
+            if is_abort {
+                if el == 4 {
+                    ax_std::println!(
+                        "[capture] double fault detected (EC={:#x}, SPSR.M=4, crash_type={})",
+                        ec, r.crash_type
+                    );
+                    break 'reclassify CrashEvent::DoubleFault;
+                }
+                if r.crash_type != 0 {
+                    ax_std::println!(
+                        "[capture] hardware exception (EC={:#x}, crash_type={}) — reclassifying as Exception",
+                        ec, r.crash_type
+                    );
+                    break 'reclassify CrashEvent::Exception;
+                }
+            }
         }
-    });
+
+        // Signal C: dmesg fallback — the hypervisor didn't trap the
+        // exception, but Linux printed ESR/FAR in dmesg.
+        if let Some(ref log_text) = kernel_log {
+            let (dmesg_esr, _dmesg_far) = crate::recovery::analyzer::extract_esr_far_from_dmesg(log_text);
+            if dmesg_esr != 0 {
+                let ec = (dmesg_esr >> 26) & 0x3F;
+                let is_abort = matches!(ec, 0x20 | 0x21 | 0x24 | 0x25);
+                if is_abort {
+                    ax_std::println!(
+                        "[capture] hardware exception from dmesg (ESR={:#x}, EC={:#x}) — reclassifying as Exception",
+                        dmesg_esr, ec
+                    );
+                    break 'reclassify CrashEvent::Exception;
+                }
+            }
+        }
+
+        event
+    };
 
     let snapshot = CrashSnapshot {
         event: actual_event,

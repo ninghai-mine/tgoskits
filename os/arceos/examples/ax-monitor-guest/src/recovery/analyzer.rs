@@ -259,7 +259,7 @@ fn get_log_text(vmcore: &VmcoreFile) -> Option<String> {
 ///
 /// Returns `(esr, far)`, both 0 if parsing fails (software-triggered
 /// panic like SysRq or BUG()).
-fn extract_esr_far_from_dmesg(dmesg: &str) -> (u64, u64) {
+pub fn extract_esr_far_from_dmesg(dmesg: &str) -> (u64, u64) {
     // ESR 行: "  ESR = 0x0000000096000044"  (prb 污染可能末尾附多余字符)
     let esr = dmesg
         .lines()
